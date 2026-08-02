@@ -26,13 +26,18 @@ oracle/
   schema.sql       # SQLite schema — reflection loop (§4b) is first-class
   db.py            # connection + idempotent schema init
   scheduler.py     # APScheduler wiring, 6 cron jobs pinned to CST, SQLite jobstore
-  jobs/            # the 6 scheduled jobs (§2) — Phase-1 stubs
+  jobs/            # the 6 scheduled jobs (§2); ingestion jobs now wired
   analysis/
     scoring.py     # pure, testable weighted-signal scoring (§4)
-  ingestion/       # yfinance / akshare / RSS pulls          (Phase 2)
+    sentiment.py   # lexicon sentiment + category classifier (§4.2, v1)
+  ingestion/       # yfinance / akshare / RSS pulls with retries (§3)
+    _retry.py      #   exponential-backoff retry helper
+    us_market.py   #   US indices/ETFs/metals -> us_close
+    china_market.py#   China indices -> china_close
+    news.py        #   RSS -> tagged headlines -> news
   reflection/      # scoring, correlation engine, LLM reflection (Phase 7)
   api/             # FastAPI endpoints for the dashboard      (Phase 4)
-tests/             # fixture-driven tests (scoring covered)
+tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
 
 ## Quick start
@@ -49,8 +54,8 @@ python -m oracle.scheduler   # start the scheduler (jobs are stubs for now)
 | Phase | What | Status |
 |---|---|---|
 | 1 | Scaffold: structure, APScheduler, SQLite schema | **done** |
-| 2 | Ingestion: `fetch_us_close` / `fetch_world_news` / `fetch_china_close` with retries | next |
-| 3 | Analysis engine: weighted scoring on live data | scoring fn + tests done |
+| 2 | Ingestion: `fetch_us_close` / `fetch_world_news` / `fetch_china_close` with retries | **done** |
+| 3 | Analysis engine: weighted scoring on live data | scoring fn + lexicon sentiment + tests done |
 | 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history` | todo |
 | 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | todo |
 | 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | todo |

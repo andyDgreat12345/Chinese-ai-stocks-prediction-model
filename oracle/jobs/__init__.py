@@ -15,11 +15,15 @@ def _stamp(name: str) -> None:
 def fetch_us_close() -> None:
     """04:15 CST — pull S&P/Nasdaq/Dow closes + sector ETF performance (§3)."""
     _stamp("fetch_us_close")
+    from ..ingestion.us_market import fetch_us_close as _run
+    _run()
 
 
 def fetch_world_news() -> None:
     """04:30 CST — pull overnight RSS headlines + first paragraph (§3)."""
     _stamp("fetch_world_news")
+    from ..ingestion.news import fetch_world_news as _run
+    _run()
 
 
 def run_analysis() -> None:
@@ -36,6 +40,8 @@ def pre_open_refresh() -> None:
 def fetch_china_close() -> None:
     """15:05 CST — log actual China close, compare vs morning prediction."""
     _stamp("fetch_china_close")
+    from ..ingestion.china_market import fetch_china_close as _run
+    _run()
 
 
 def reflect_and_update() -> None:
