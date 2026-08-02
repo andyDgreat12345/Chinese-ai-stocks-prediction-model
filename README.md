@@ -51,6 +51,7 @@ oracle/
     scoring.py     #   (i)   prediction scoring vs actual + calibration
     correlation.py #   (ii)  rolling US→China correlation + news-impact table
     reflect.py     #   (iii) reflection log (rule-based; LLM-swappable)
+    llm.py         #   optional reflection LLM (Claude / DeepSeek, off by default)
   api/
     server.py      # FastAPI: dashboard + /api/prediction /heatmap /history
                    #   /accuracy /leaderboard /news-impact /reflections

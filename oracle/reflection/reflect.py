@@ -157,19 +157,41 @@ def _render_markdown(reflection: dict, created_at: str) -> None:
     (notes_dir / f"{d}.md").write_text("\n".join(md))
 
 
+_UNSET = object()
+
+
 def generate_reflection(
     trade_date: str | None = None,
-    llm: Callable[[dict], dict] | None = None,
+    llm: Callable[[dict], dict] | None = _UNSET,  # type: ignore[assignment]
 ) -> dict | None:
-    """Job entrypoint: build context, generate the reflection (LLM if provided,
-    else rule-based), persist it. Returns the reflection dict. Never raises."""
+    """Job entrypoint: build context, generate the reflection, persist it.
+    Returns the reflection dict. Never raises.
+
+    `llm` resolution: if left unset, an optional LLM backend is auto-selected
+    from env config (spec §4b-iii — Sonnet-tier is enough; provider-agnostic via
+    reflection/llm.py). Pass an explicit callable to override, or None to force
+    the deterministic rule-based generator. Any LLM failure falls back to
+    rule-based, so the loop never depends on the LLM.
+    """
     trade_date = trade_date or datetime.now(timezone.utc).date().isoformat()
+    if llm is _UNSET:
+        from .llm import get_reflection_llm
+        llm = get_reflection_llm()
     try:
         ctx = build_context(trade_date)
         if not ctx["rows"]:
             print(f"generate_reflection: no scored predictions for {trade_date}, skipping")
             return None
-        reflection = llm(ctx) if llm else rule_based_reflection(ctx)
+
+        reflection = None
+        if llm is not None:
+            try:
+                reflection = llm(ctx)
+            except Exception as e:  # noqa: BLE001 — fall back, don't skip the day
+                print(f"generate_reflection: LLM backend failed ({e!r}); using rule-based")
+        if reflection is None:
+            reflection = rule_based_reflection(ctx)
+
         _persist(reflection, trade_date)
         print(f"generate_reflection: wrote reflection for {trade_date} "
               f"(confidence: {reflection.get('confidence_in_this_reflection')})")

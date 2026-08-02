@@ -108,13 +108,21 @@ Each is an isolated, independently testable module.
 | Self-scoring + calibration | `oracle/reflection/scoring.py` |
 | Reflection log | `oracle/reflection/reflect.py` |
 
-**On LLMs (spec §7b):** the system uses **zero external LLM calls** today —
-fully deterministic and offline. LLMs are deliberately kept *out* of the
-prediction hot path (no model "inventing" stock research). The one place an LLM
-is worth it is the daily *reflection*; `generate_reflection(llm=...)` is the
-seam to drop in a Sonnet-tier call later. Cheap high-throughput fan-out
-(DeepSeek-style) only matters if per-ticker research across many stocks is added
-— not needed for v1.
+**On LLMs (spec §7b):** the system is **fully deterministic and offline by
+default** — no LLM in the prediction hot path (no model "inventing" stock
+research). The one place an LLM is worth it is the daily *reflection*, and that
+seam is now wired: `reflection/llm.py` provides an **optional, provider-agnostic
+backend** (Claude via the official SDK, or DeepSeek via its OpenAI-compatible
+endpoint) selected by `ORACLE_LLM_PROVIDER`. It only *interprets* the real
+predicted-vs-actual data it's handed — it never invents numbers — and any
+failure (or no key) falls back to the deterministic rule-based generator, so the
+loop never depends on the LLM. Cheap high-throughput fan-out (DeepSeek across
+many tickers) still only matters if per-ticker research is added later.
+
+**Enable it** by setting `ORACLE_LLM_PROVIDER=claude` (+ `ANTHROPIC_API_KEY`) or
+`=deepseek` (+ `DEEPSEEK_API_KEY`). Optional `ORACLE_LLM_MODEL` overrides the
+model — Claude defaults to `claude-opus-5`; the spec notes Sonnet-tier is
+enough, so `ORACLE_LLM_MODEL=claude-sonnet-5` is a cheaper choice.
 
 ---
 
@@ -201,5 +209,6 @@ Remaining items are operational hardening, not missing features:
 - **Macro ingestion is file-based** (hand-maintained JSON). A live akshare /
   Trading Economics RSS feed is a clean future upgrade behind `load_from_file`.
 - **v2 (spec §4.2/§7b):** swap lexicon sentiment for an LLM-per-batch
-  classifier; add the Sonnet-tier reflection LLM via the `generate_reflection`
-  seam; train a model on logged data once a few months accumulate.
+  classifier; train a model on logged data once a few months accumulate.
+  (The Sonnet-tier reflection LLM is already wired — see §5, optional and
+  off by default.)

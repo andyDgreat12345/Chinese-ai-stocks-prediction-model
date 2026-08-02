@@ -64,6 +64,19 @@ That's it — from here the two daily runs (05:00 and 15:15 CST) keep it current
 - **Reset everything:** delete the `oracle-state` branch; the next run starts
   fresh.
 
+## Optional: enable the LLM reflection
+
+By default the daily reflection is deterministic (rule-based) and needs no keys.
+To upgrade it to an LLM-written reflection (spec §4b-iii):
+
+1. Repo → **Settings → Secrets and variables → Actions**.
+2. Add a **variable** `ORACLE_LLM_PROVIDER` = `claude` or `deepseek` (optionally
+   `ORACLE_LLM_MODEL`, e.g. `claude-sonnet-5`).
+3. Add the matching **secret**: `ANTHROPIC_API_KEY` or `DEEPSEEK_API_KEY`.
+
+The workflow already passes these through. If the key is missing or the call
+fails, it silently falls back to the rule-based reflection — nothing breaks.
+
 ## Trade-offs vs. a VPS
 
 - **Timing** isn't second-precise — Actions cron can lag a few minutes under

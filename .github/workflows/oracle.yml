@@ -38,6 +38,13 @@ jobs:
       ORACLE_DB: ${{ github.workspace }}/_state/oracle.db
       ORACLE_REFLECTION_LOG: ${{ github.workspace }}/_state/reflection_log.jsonl
       ORACLE_MACRO_FILE: ${{ github.workspace }}/_state/macro_events.json
+      # Optional LLM reflection backend (spec §4b-iii). Leave unset for the
+      # deterministic rule-based reflection. To enable: set repo variable
+      # ORACLE_LLM_PROVIDER (claude|deepseek) and the matching API-key secret.
+      ORACLE_LLM_PROVIDER: ${{ vars.ORACLE_LLM_PROVIDER }}
+      ORACLE_LLM_MODEL: ${{ vars.ORACLE_LLM_MODEL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
