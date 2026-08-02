@@ -57,6 +57,7 @@ oracle/
                    #   /accuracy /leaderboard /news-impact /reflections
                    #   /weights /markets (§5, §4b)
   dashboard/       # terminal UI (index.html + static/{styles.css,app.js})
+  backtest.py      # evaluation engine: replay history, baselines, Sharpe, p-value
 app.py             # `python app.py` -> backend + dashboard on localhost:8000
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
@@ -90,6 +91,25 @@ does no compute of its own; panel layout persists in `localStorage`.
 | 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | **done** (all 6 jobs wired; live cron untested) |
 | 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | **done** (top priority) |
 | 8 | Disclaimers: persistent banner + per-prediction caveat | **done** (banner in UI + in every API payload) |
+
+## Evaluating prediction ability (before any real money)
+
+Real depth is proven by measurement, not asserted. The backtest engine
+(`oracle/backtest.py`) replays whatever historical data is in the DB through the
+*current* model and reports it **against naive baselines** so you can see if
+there's a real edge:
+
+```bash
+python -m oracle.backtest [start_date] [end_date]
+```
+
+It reports, per strategy (model vs. always-bullish / US-direction / persistence):
+directional accuracy, **paper-trading return + annualized Sharpe**, and a
+**binomial p-value** (is a >50% hit-rate real or luck?), plus a model
+**calibration** table (does "high confidence" actually track accuracy?). The
+model only earns its keep if it beats the baselines on bet-accuracy *and* Sharpe
+with a small p-value. This is the honest gate before trusting it with money —
+and it makes every future data source or research agent a measured experiment.
 
 ## The reflection loop (§4b — top priority)
 
