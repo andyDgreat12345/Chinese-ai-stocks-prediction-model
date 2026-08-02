@@ -174,6 +174,23 @@ def prediction_history(limit: int = 200, db_path=None) -> list[dict]:
         conn.close()
 
 
+def latest_market_rows(table: str, db_path=None) -> list[dict]:
+    """All rows of `us_close`/`china_close` for the most recent trade_date."""
+    if table not in ("us_close", "china_close"):
+        raise ValueError(f"unexpected table: {table}")
+    conn = connect(db_path)
+    try:
+        latest = conn.execute(f"SELECT MAX(trade_date) AS d FROM {table}").fetchone()
+        if not latest or latest["d"] is None:
+            return []
+        cur = conn.execute(
+            f"SELECT * FROM {table} WHERE trade_date = ? ORDER BY symbol", (latest["d"],)
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def predictions_for_date(trade_date: str, db_path=None) -> list[dict]:
     """All predictions for a specific predicted date (with their id + signals)."""
     conn = connect(db_path)

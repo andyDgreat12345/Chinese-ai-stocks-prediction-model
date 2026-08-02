@@ -56,3 +56,24 @@ def test_heatmap_cells(client):
 def test_accuracy_empty_before_scoring(client):
     # No actuals scored yet -> hit_rate is None, not a fabricated number.
     assert client.get("/api/accuracy").json()["overall"]["hit_rate"] is None
+
+
+def test_dashboard_shell_and_static_serve(client):
+    root = client.get("/")
+    assert root.status_code == 200
+    assert "China Market Oracle" in root.text
+    assert client.get("/static/styles.css").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+
+
+def test_markets_splits_indices_sectors_metals(client):
+    # seed a couple of US rows across sector tags
+    db.upsert_market_close("us_close", [
+        {"trade_date": "2026-08-02", "symbol": "^GSPC", "sector": "broad",
+         "close": 5200.0, "pct_change": 1.0, "fetched_at": "t"},
+        {"trade_date": "2026-08-02", "symbol": "GC=F", "sector": "gold",
+         "close": 2400.0, "pct_change": 0.3, "fetched_at": "t"},
+    ])
+    m = client.get("/api/markets").json()
+    assert any(r["symbol"] == "^GSPC" for r in m["indices"])
+    assert any(r["symbol"] == "GC=F" for r in m["metals"])

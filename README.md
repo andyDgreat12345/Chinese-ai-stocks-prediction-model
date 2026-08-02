@@ -45,8 +45,11 @@ oracle/
     correlation.py #   (ii)  rolling US→China correlation + news-impact table
     reflect.py     #   (iii) reflection log (rule-based; LLM-swappable)
   api/
-    server.py      # FastAPI: /api/prediction /heatmap /history /accuracy
-                   #   /leaderboard /news-impact /reflections /weights (§5, §4b)
+    server.py      # FastAPI: dashboard + /api/prediction /heatmap /history
+                   #   /accuracy /leaderboard /news-impact /reflections
+                   #   /weights /markets (§5, §4b)
+  dashboard/       # terminal UI (index.html + static/{styles.css,app.js})
+app.py             # `python app.py` -> backend + dashboard on localhost:8000
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
 
@@ -56,9 +59,15 @@ tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 pip install -r requirements.txt
 python -m oracle.db          # create data/oracle.db
 python -m pytest -q          # run tests
-python -m oracle.scheduler   # start the scheduler (ingestion + analysis wired)
-uvicorn oracle.api.server:app --port 8000   # serve the dashboard API
+python app.py                # start backend + terminal dashboard → localhost:8000
+python -m oracle.scheduler   # (separately) run the daily cron jobs
 ```
+
+The dashboard (`oracle/dashboard/`) is a vanilla-JS terminal UI served by the
+same FastAPI app: 9 draggable panels (prediction summary, score-colored sector
+heatmap, accuracy tracker, US→China leaderboard, weights diff, reflection log,
+global markets, precious metals, world-session clocks). It polls the API and
+does no compute of its own; panel layout persists in `localStorage`.
 
 ## Build roadmap (spec §6)
 
@@ -68,10 +77,10 @@ uvicorn oracle.api.server:app --port 8000   # serve the dashboard API
 | 2 | Ingestion: `fetch_us_close` / `fetch_world_news` / `fetch_china_close` with retries | **done** |
 | 3 | Analysis engine: weighted scoring on live data | **done** (pipeline wired US→China + sentiment → predictions) |
 | 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history`, `/api/accuracy` | **done** |
-| 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | todo |
-| 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | todo |
+| 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | **done** (9 panels, drag-reorder, localStorage) |
+| 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | **done** (jobs wired; live cron untested) |
 | 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | **done** (top priority) |
-| 8 | Disclaimers: persistent banner + per-prediction caveat | in API/reflection; needs UI banner |
+| 8 | Disclaimers: persistent banner + per-prediction caveat | **done** (banner in UI + in every API payload) |
 
 ## The reflection loop (§4b — top priority)
 

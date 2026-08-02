@@ -13,16 +13,50 @@ Run:  uvicorn oracle.api.server:app --port 8000
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .. import config, db
 
 app = FastAPI(title="China Market Oracle", version="0.1.0")
 
+# ── Dashboard (terminal UI, spec §5) ─────────────────────────────────────
+_DASH = Path(__file__).resolve().parent.parent / "dashboard"
+if (_DASH / "static").is_dir():
+    app.mount("/static", StaticFiles(directory=_DASH / "static"), name="static")
+
+
+@app.get("/")
+def index():
+    """Serve the terminal dashboard."""
+    return FileResponse(_DASH / "index.html")
+
 
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "disclaimer": config.DISCLAIMER}
+
+
+@app.get("/api/markets")
+def markets() -> dict:
+    """Latest raw US closes, split into indices / sector ETFs / metals, for the
+    global-markets and precious-metals panels (spec §5, retained panels)."""
+    rows = db.latest_market_rows("us_close")
+    pick = lambda tags: [  # noqa: E731
+        {"symbol": r["symbol"], "sector": r["sector"],
+         "close": r["close"], "pct_change": r["pct_change"]}
+        for r in rows if r["sector"] in tags
+    ]
+    return {
+        "trade_date": rows[0]["trade_date"] if rows else None,
+        "disclaimer": config.DISCLAIMER,
+        "indices": pick({"broad", "tech"}),
+        "sectors": pick({"energy", "financials", "semis"}),
+        "metals": pick({"gold", "silver"}),
+    }
 
 
 @app.get("/api/prediction")
