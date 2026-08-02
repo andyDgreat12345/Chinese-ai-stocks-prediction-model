@@ -8,7 +8,8 @@ Chinese equity markets in a terminal-style dashboard.
 > yourself — not a buy/sell instruction and not a guarantee of returns.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the system runs — operating
-model, hosting, backend, and data flow.
+model, hosting, backend, and data flow — and [DEPLOY.md](DEPLOY.md) to stand it
+up on an always-on host with systemd.
 
 ## Top priority
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=China Market Oracle - dashboard + API server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+# Bind to localhost only — the dashboard has no auth. Reach it via SSH tunnel or
+# a reverse proxy with auth (see DEPLOY.md). Do NOT bind 0.0.0.0 without auth.
+ExecStart=__VENV__/bin/uvicorn oracle.api.server:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
