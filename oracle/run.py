@@ -18,23 +18,42 @@ ORDER = [
     "pre_open_refresh", "fetch_china_close", "reflect_and_update",
 ]
 
+# Named phases for a two-run automated cadence (e.g. GitHub Actions): the
+# morning half produces the day's prediction; the afternoon half (after the
+# China close) scores it and reflects.
+GROUPS = {
+    "morning": ["fetch_us_close", "fetch_world_news", "run_analysis"],
+    "afternoon": ["fetch_china_close", "reflect_and_update"],
+    "all": ORDER,
+}
+
+
+def _resolve(name: str) -> list[str] | None:
+    if name in GROUPS:
+        return GROUPS[name]
+    if name in REGISTRY:
+        return [name]
+    return None
+
 
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print("usage: python -m oracle.run <job|all>")
-        print("jobs :", ", ".join(ORDER))
+        print("usage: python -m oracle.run <job|phase>")
+        print("phases:", ", ".join(GROUPS))
+        print("jobs  :", ", ".join(ORDER))
         return 0
 
-    name = argv[0]
-    if name != "all" and name not in REGISTRY:
-        print(f"unknown job: {name}")
-        print("jobs :", ", ".join(ORDER))
+    jobs = _resolve(argv[0])
+    if jobs is None:
+        print(f"unknown job/phase: {argv[0]}")
+        print("phases:", ", ".join(GROUPS))
+        print("jobs  :", ", ".join(ORDER))
         return 1
 
     from .db import init_db
     init_db()
 
-    for job in (ORDER if name == "all" else [name]):
+    for job in jobs:
         REGISTRY[job]()
     return 0
 

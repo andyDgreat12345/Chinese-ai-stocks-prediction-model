@@ -8,8 +8,13 @@ Chinese equity markets in a terminal-style dashboard.
 > yourself — not a buy/sell instruction and not a guarantee of returns.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the system runs — operating
-model, hosting, backend, and data flow — and [DEPLOY.md](DEPLOY.md) to stand it
-up on an always-on host with systemd.
+model, hosting, backend, and data flow. To deploy, pick one:
+
+- **[GITHUB_PAGES.md](GITHUB_PAGES.md)** — zero-server: GitHub Actions runs the
+  jobs on a schedule and publishes the dashboard to GitHub Pages. $0, no box to
+  manage (public dashboard).
+- **[DEPLOY.md](DEPLOY.md)** — an always-on host (small VPS) with systemd; keeps
+  the dashboard private and gives precise job timing.
 
 ## Top priority
 

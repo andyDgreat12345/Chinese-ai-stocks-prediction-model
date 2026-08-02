@@ -20,9 +20,14 @@ const pct = (v) => (v == null ? "—" : `${v > 0 ? "+" : ""}${Number(v).toFixed(
 const signClass = (v) => (v == null ? "dim" : v > 0 ? "pos" : v < 0 ? "neg" : "dim");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-async function getJSON(path) {
-  const r = await fetch(path, { cache: "no-store" });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+// Live: hit the FastAPI /api/<name> endpoints. Static (GitHub Pages): fetch the
+// prebuilt api/<name>.json snapshots written by the site build.
+const STATIC = !!window.CMO_STATIC;
+const apiUrl = (name) => (STATIC ? `api/${name}.json` : `/api/${name}`);
+
+async function getJSON(name) {
+  const r = await fetch(apiUrl(name), { cache: "no-store" });
+  if (!r.ok) throw new Error(`${name} ${r.status}`);
   return r.json();
 }
 
@@ -46,7 +51,7 @@ const PANELS = [
   {
     id: "prediction", title: "Prediction Summary", wide: true,
     async render(body) {
-      const d = await getJSON("/api/prediction");
+      const d = await getJSON("prediction");
       if (!d.predictions.length) return void (body.innerHTML = emptyNote("No prediction yet — run the analysis job."));
       const head = el("div", "dim", `China session ${esc(d.trade_date || "—")}`);
       body.innerHTML = "";
@@ -68,7 +73,7 @@ const PANELS = [
   {
     id: "heatmap", title: "Sector Heatmap (predicted)",
     async render(body) {
-      const d = await getJSON("/api/heatmap");
+      const d = await getJSON("heatmap");
       if (!d.cells.length) return void (body.innerHTML = emptyNote("No prediction data."));
       const grid = el("div", "heatmap");
       for (const c of d.cells) {
@@ -87,7 +92,7 @@ const PANELS = [
   {
     id: "accuracy", title: "Accuracy Tracker",
     async render(body) {
-      const d = await getJSON("/api/accuracy");
+      const d = await getJSON("accuracy");
       const o = d.overall;
       if (!o.scored) return void (body.innerHTML = emptyNote("No scored predictions yet — accuracy appears after the reflection job runs."));
       const rate = o.hit_rate == null ? 0 : o.hit_rate;
@@ -110,7 +115,7 @@ const PANELS = [
   {
     id: "leaderboard", title: "US → China Influence",
     async render(body) {
-      const d = await getJSON("/api/leaderboard");
+      const d = await getJSON("leaderboard");
       if (!d.rows.length) return void (body.innerHTML = emptyNote("Correlations appear once enough daily data accumulates."));
       const t = el("table");
       t.innerHTML = "<tr><th>US</th><th>→ China</th><th class='num'>corr</th><th class='num'>lag</th><th class='num'>n</th><th></th></tr>";
@@ -133,7 +138,7 @@ const PANELS = [
   {
     id: "weights", title: "Model Weights (vs suggested)",
     async render(body) {
-      const d = await getJSON("/api/weights");
+      const d = await getJSON("weights");
       body.innerHTML = "";
       for (const r of d.rows) {
         const cur = Number(r.current_weight), sug = r.suggested_weight;
@@ -155,10 +160,10 @@ const PANELS = [
   {
     id: "reflections", title: "Reflection Log", wide: true,
     async render(body) {
-      const d = await getJSON("/api/reflections?limit=6");
+      const d = await getJSON("reflections");
       if (!d.rows.length) return void (body.innerHTML = emptyNote("Reflections appear after the daily self-improvement pass."));
       body.innerHTML = "";
-      for (const r of d.rows) {
+      for (const r of d.rows.slice(0, 6)) {
         let worked = [], missed = [], adj = {};
         try { worked = JSON.parse(r.signals_that_worked || "[]"); } catch {}
         try { missed = JSON.parse(r.signals_that_missed || "[]"); } catch {}
@@ -180,7 +185,7 @@ const PANELS = [
   {
     id: "markets", title: "Global Markets (US close)",
     async render(body) {
-      const d = await getJSON("/api/markets");
+      const d = await getJSON("markets");
       const all = [...d.indices, ...d.sectors];
       if (!all.length) return void (body.innerHTML = emptyNote("No US market data yet."));
       const t = el("table");
@@ -198,7 +203,7 @@ const PANELS = [
   {
     id: "metals", title: "Precious Metals",
     async render(body) {
-      const d = await getJSON("/api/markets");
+      const d = await getJSON("markets");
       if (!d.metals.length) return void (body.innerHTML = emptyNote("No metals data yet."));
       const t = el("table");
       t.innerHTML = "<tr><th>metal</th><th class='num'>close</th><th class='num'>chg</th></tr>";
@@ -328,7 +333,7 @@ async function refreshData() {
   conn.className = "conn " + (ok ? "ok" : "bad");
   $("#updated").textContent = "updated " + new Date().toLocaleTimeString();
   try {
-    const h = await getJSON("/api/health");
+    const h = await getJSON("health");
     if (h.disclaimer) $("#disclaimer").textContent = h.disclaimer;
   } catch {}
 }

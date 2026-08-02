@@ -10,13 +10,15 @@ import os
 from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────────
+# Each is overridable by env var so a stateless runner (e.g. GitHub Actions)
+# can point the DB + logs at a persisted state directory between runs.
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
-DB_PATH = DATA_DIR / "oracle.db"
-REFLECTION_LOG = DATA_DIR / "reflection_log.jsonl"
+DB_PATH = Path(os.environ.get("ORACLE_DB") or DATA_DIR / "oracle.db")
+REFLECTION_LOG = Path(os.environ.get("ORACLE_REFLECTION_LOG") or DATA_DIR / "reflection_log.jsonl")
 # Hand-maintained macro calendar (Fed/CPI/PMI). JSON list of
 # {event_date, category, description, weight}. See examples/macro_events.sample.json.
-MACRO_CALENDAR_FILE = DATA_DIR / "macro_events.json"
+MACRO_CALENDAR_FILE = Path(os.environ.get("ORACLE_MACRO_FILE") or DATA_DIR / "macro_events.json")
 
 # ── Timezone ─────────────────────────────────────────────────────────────
 # China A-share market: 09:30–15:00 CST (lunch 11:30–13:00).
