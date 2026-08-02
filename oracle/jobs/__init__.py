@@ -20,10 +20,13 @@ def fetch_us_close() -> None:
 
 
 def fetch_world_news() -> None:
-    """04:30 CST — pull overnight RSS headlines + first paragraph (§3)."""
+    """04:30 CST — pull overnight RSS headlines + first paragraph, and load the
+    macro calendar (Fed/CPI/PMI) for the day (§3)."""
     _stamp("fetch_world_news")
     from ..ingestion.news import fetch_world_news as _run
+    from ..ingestion.macro import fetch_macro_calendar
     _run()
+    fetch_macro_calendar()
 
 
 def run_analysis() -> None:
@@ -37,6 +40,10 @@ def run_analysis() -> None:
 def pre_open_refresh() -> None:
     """09:15 CST — re-check 05:00–09:15 breaking news, adjust confidence."""
     _stamp("pre_open_refresh")
+    from ..ingestion.news import fetch_world_news as _news
+    from ..analysis.pipeline import pre_open_refresh as _refresh
+    _news()      # pull any breaking headlines since the 04:30 fetch (idempotent)
+    _refresh()   # adjust today's prediction confidence on the fresh news
 
 
 def fetch_china_close() -> None:

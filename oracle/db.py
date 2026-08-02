@@ -107,6 +107,33 @@ def get_rows_for_date(table: str, trade_date: str, db_path=None) -> list[dict]:
         conn.close()
 
 
+def insert_macro_events(rows: list[dict], db_path=None) -> int:
+    """Insert macro calendar rows, skipping exact (date, description) dupes.
+    Row: {event_date, category, description, weight, notes}. Returns count."""
+    if not rows:
+        return 0
+    conn = connect(db_path)
+    written = 0
+    try:
+        for r in rows:
+            dup = conn.execute(
+                "SELECT 1 FROM macro_events WHERE event_date=? AND description=? LIMIT 1",
+                (r["event_date"], r["description"]),
+            ).fetchone()
+            if dup:
+                continue
+            conn.execute(
+                """INSERT INTO macro_events (event_date, category, description, weight, notes)
+                   VALUES (:event_date, :category, :description, :weight, :notes)""",
+                r,
+            )
+            written += 1
+        conn.commit()
+        return written
+    finally:
+        conn.close()
+
+
 def macro_event_dates(trade_date: str, db_path=None) -> list[dict]:
     """Scheduled macro events on a given date (spec §4.3)."""
     conn = connect(db_path)

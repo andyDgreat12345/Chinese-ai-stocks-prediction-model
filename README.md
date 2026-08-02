@@ -39,6 +39,7 @@ oracle/
     us_market.py   #   US indices/ETFs/metals -> us_close
     china_market.py#   China broad indices + sector ETFs -> china_close
     news.py        #   RSS -> tagged headlines -> news
+    macro.py       #   hand-maintained macro calendar -> macro_events
   reflection/      # self-improvement loop (§4b, top priority)
     stats.py       #   pure math: pearson, best-fit lag, calibration/Brier
     scoring.py     #   (i)   prediction scoring vs actual + calibration
@@ -59,6 +60,7 @@ tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 pip install -r requirements.txt
 python -m oracle.db          # create data/oracle.db
 python -m pytest -q          # run tests
+cp examples/macro_events.sample.json data/macro_events.json   # optional: seed macro calendar
 python app.py                # start backend + terminal dashboard → localhost:8000
 python -m oracle.scheduler   # (separately) run the daily cron jobs
 ```
@@ -78,7 +80,7 @@ does no compute of its own; panel layout persists in `localStorage`.
 | 3 | Analysis engine: weighted scoring on live data | **done** (pipeline wired US→China + sentiment → predictions) |
 | 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history`, `/api/accuracy` | **done** |
 | 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | **done** (9 panels, drag-reorder, localStorage) |
-| 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | **done** (jobs wired; live cron untested) |
+| 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | **done** (all 6 jobs wired; live cron untested) |
 | 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | **done** (top priority) |
 | 8 | Disclaimers: persistent banner + per-prediction caveat | **done** (banner in UI + in every API payload) |
 

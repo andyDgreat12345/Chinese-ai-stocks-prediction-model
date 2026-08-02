@@ -27,10 +27,12 @@ actually reads back. That is what makes month 6 better than month 1.
 ```
 04:00  (US markets close)
 04:15  fetch_us_close      yfinance: indices + sector ETFs + metals   → us_close
-04:30  fetch_world_news    RSS: headline + 1st paragraph, tag         → news
+04:30  fetch_world_news    RSS: headline + 1st paragraph, tag; load
+                           macro calendar (Fed/CPI/PMI)               → news, macro_events
 05:00  run_analysis        read us_close+news+macro, pull recent
                            reflections, score each China sector       → predictions
-09:15  pre_open_refresh    (STUB) re-check breaking news, nudge confidence
+09:15  pre_open_refresh    re-fetch breaking news, adjust prediction
+                           confidence (direction preserved)           → predictions
 09:30  (China opens) ─────────────────────────────────────────────
 15:00  (China closes)
 15:05  fetch_china_close   akshare: broad indices + sector ETFs       → china_close
@@ -181,13 +183,23 @@ Runs at 15:15 as three separable, individually auditable sub-systems:
 
 ---
 
-## 9. Known gaps
+## 9. Status & remaining work
 
-- **`pre_open_refresh` (09:15) is a stub** — the breaking-news re-check isn't
-  implemented yet.
-- **Macro-event ingestion** is unwired (the table + scoring hook exist).
-- **Dashboard (Phase 5)** — the API serves everything the panels need; the
-  terminal UI itself is not built.
-- **Sector-ETF codes** in `config.CHINA_SECTOR_ETFS` should be verified against
-  live akshare on first run; ingestion fails soft, so a wrong code just leaves
-  that sector unscored until corrected.
+**v1 is complete** — all eight build phases (§6) are done and every scheduled
+job runs real logic. The full spine runs end-to-end: ingest → predict →
+pre-open refresh → score → measure influence → reflect → feed tomorrow →
+display.
+
+Remaining items are operational hardening, not missing features:
+
+- **Live cron run** has not been exercised against real yfinance/akshare/RSS —
+  it needs the always-on host (spec §7). Jobs fail soft, so first-run
+  surprises degrade gracefully rather than crash.
+- **Sector-ETF codes** in `config.CHINA_SECTOR_ETFS` and the **macro calendar**
+  (`data/macro_events.json`, seeded from `examples/`) should be verified on
+  first run; a wrong ETF code just leaves that sector unscored until corrected.
+- **Macro ingestion is file-based** (hand-maintained JSON). A live akshare /
+  Trading Economics RSS feed is a clean future upgrade behind `load_from_file`.
+- **v2 (spec §4.2/§7b):** swap lexicon sentiment for an LLM-per-batch
+  classifier; add the Sonnet-tier reflection LLM via the `generate_reflection`
+  seam; train a model on logged data once a few months accumulate.

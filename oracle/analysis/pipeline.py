@@ -95,6 +95,58 @@ def build_signals(
     return signals
 
 
+def pre_open_refresh(trade_date: str | None = None) -> int:
+    """09:15 CST confidence re-check (spec §2). Re-scores today's sectors on the
+    latest news (any 05:00–09:15 breaking headlines the job just pulled) and
+    adjusts each morning prediction's *confidence only* — direction and the
+    stored morning component signals are preserved so the §4b-i audit trail
+    stays honest. If breaking news would flip a call, confidence is dropped to
+    'low' and the contradiction is noted. Returns the number adjusted.
+
+    Pure DB I/O (no network) — the breaking-news fetch lives in the job wrapper.
+    """
+    now = datetime.now(timezone.utc)
+    trade_date = trade_date or now.date().isoformat()
+    try:
+        us_rows = db.get_rows_for_date("us_close", trade_date)
+        news_rows = db.get_rows_for_date("news", trade_date)
+        macro = db.macro_event_dates(trade_date)
+        weights = db.get_weights()
+        signals = build_signals(us_rows, news_rows, macro)
+
+        adjusted = 0
+        for p in db.predictions_for_date(trade_date):
+            sig = signals.get(p["sector"])
+            if sig is None:
+                continue
+            fresh = score_sector(sig, weights)
+            new_conf, note = p["confidence"], None
+            if fresh.direction != p["direction"]:
+                new_conf = "low"
+                note = f"pre-open: breaking news contradicts morning {p['direction']} call"
+            elif fresh.confidence != p["confidence"]:
+                new_conf = fresh.confidence
+                note = f"pre-open: confidence {p['confidence']} -> {new_conf} on breaking news"
+            if note is None:
+                continue
+            db.upsert_prediction({
+                "trade_date": p["trade_date"], "sector": p["sector"],
+                "direction": p["direction"], "confidence": new_conf,
+                "composite_score": p["composite_score"],
+                "us_spillover": p["us_spillover"],
+                "sentiment_score": p["sentiment_score"],
+                "macro_flag": p["macro_flag"],
+                "rationale": f"{p['rationale']} | {note}",
+                "created_at": p["created_at"],
+            })
+            adjusted += 1
+        print(f"pre_open_refresh: adjusted {adjusted} prediction(s) for {trade_date}")
+        return adjusted
+    except Exception as e:  # noqa: BLE001
+        print(f"pre_open_refresh FAILED: {e!r}")
+        return 0
+
+
 _MAGNITUDE_DELTA = {"small": 0.02, "med": 0.05, "large": 0.10}
 
 

@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "oracle.db"
 REFLECTION_LOG = DATA_DIR / "reflection_log.jsonl"
+# Hand-maintained macro calendar (Fed/CPI/PMI). JSON list of
+# {event_date, category, description, weight}. See examples/macro_events.sample.json.
+MACRO_CALENDAR_FILE = DATA_DIR / "macro_events.json"
 
 # ── Timezone ─────────────────────────────────────────────────────────────
 # China A-share market: 09:30–15:00 CST (lunch 11:30–13:00).
