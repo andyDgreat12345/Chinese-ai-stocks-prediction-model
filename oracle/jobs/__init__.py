@@ -48,8 +48,18 @@ def fetch_china_close() -> None:
 
 def reflect_and_update() -> None:
     """15:15 CST — self-improvement pass (§4b, TOP PRIORITY): score prediction,
-    update correlation leaderboard + news-impact table, write reflection log."""
+    update correlation leaderboard + news-impact table, write reflection log.
+
+    Three sub-systems run in order — each auditable on its own (§4b)."""
     _stamp("reflect_and_update")
+    from ..reflection.scoring import score_predictions
+    from ..reflection.correlation import update_correlations, update_news_impact
+    from ..reflection.reflect import generate_reflection
+
+    score_predictions()        # (i)  directional accuracy + calibration
+    update_correlations()      # (ii) rolling US->China correlation/lag engine
+    update_news_impact()       # (ii) news-category -> China-sector impact table
+    generate_reflection()      # (iii) structured reflection log entry
 
 
 REGISTRY = {

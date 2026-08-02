@@ -74,6 +74,40 @@ def history(limit: int = 200) -> dict:
     return {"disclaimer": config.DISCLAIMER, "rows": db.prediction_history(limit)}
 
 
+@app.get("/api/leaderboard")
+def leaderboard(established_only: bool = False) -> dict:
+    """US→China correlation leaderboard (spec §4b-ii). Established correlations
+    (>= min sample) are flagged distinctly from noisy low-sample ones."""
+    return {"disclaimer": config.DISCLAIMER,
+            "min_sample": config.MIN_CORRELATION_SAMPLE,
+            "rows": db.leaderboard(established_only)}
+
+
+@app.get("/api/news-impact")
+def news_impact() -> dict:
+    """News-category → typical China-sector move, with sample size + variance."""
+    return {"disclaimer": config.DISCLAIMER, "rows": db.news_impact_table()}
+
+
+@app.get("/api/reflections")
+def reflections(limit: int = 30) -> dict:
+    """Recent reflection-log entries (spec §4b-iii)."""
+    return {"disclaimer": config.DISCLAIMER, "rows": db.recent_reflections(limit)}
+
+
+@app.get("/api/weights")
+def weights() -> dict:
+    """Current model weights vs. the reflection loop's suggested weights, so the
+    dashboard can show the proposed-self-correction diff (spec §4b-iii)."""
+    conn = db.connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT signal, current_weight, suggested_weight FROM weights")]
+    finally:
+        conn.close()
+    return {"auto_apply": config.AUTO_APPLY_WEIGHT_ADJUSTMENTS, "rows": rows}
+
+
 @app.get("/api/accuracy")
 def accuracy() -> dict:
     """Rolling directional hit-rate from scored predictions (spec §4.5, §5)."""

@@ -36,9 +36,14 @@ oracle/
     us_market.py   #   US indices/ETFs/metals -> us_close
     china_market.py#   China indices -> china_close
     news.py        #   RSS -> tagged headlines -> news
-  reflection/      # scoring, correlation engine, LLM reflection (Phase 7)
+  reflection/      # self-improvement loop (§4b, top priority)
+    stats.py       #   pure math: pearson, best-fit lag, calibration/Brier
+    scoring.py     #   (i)   prediction scoring vs actual + calibration
+    correlation.py #   (ii)  rolling US→China correlation + news-impact table
+    reflect.py     #   (iii) reflection log (rule-based; LLM-swappable)
   api/
-    server.py      # FastAPI: /api/prediction /heatmap /history /accuracy (§5)
+    server.py      # FastAPI: /api/prediction /heatmap /history /accuracy
+                   #   /leaderboard /news-impact /reflections /weights (§5, §4b)
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
 
@@ -62,8 +67,28 @@ uvicorn oracle.api.server:app --port 8000   # serve the dashboard API
 | 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history`, `/api/accuracy` | **done** |
 | 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | todo |
 | 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | todo |
-| 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | todo (top priority) |
-| 8 | Disclaimers: persistent banner + per-prediction caveat | disclaimer wired in config |
+| 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | **done** (top priority) |
+| 8 | Disclaimers: persistent banner + per-prediction caveat | in API/reflection; needs UI banner |
+
+## The reflection loop (§4b — top priority)
+
+Runs at 15:15 CST once the actual China close is in (`reflect_and_update`), as
+three separable, individually auditable sub-systems:
+
+1. **Prediction scoring** (`reflection/scoring.py`) — directional hit/miss per
+   sector plus a Brier term, so *calibration* is measurable, not just accuracy.
+   Sectors with no actual data are left unscored rather than guessed.
+2. **US→China influence** (`reflection/correlation.py`) — rolling correlation +
+   best-fit lag for every US↔China symbol pair, gated by a ≥30-observation
+   guard so noise can't masquerade as a "strong correlation"; plus a
+   news-category → China-sector impact table with sample size and variance.
+3. **Reflection log** (`reflection/reflect.py`) — a structured daily entry
+   (which signals worked/missed, likely reason, suggested weight adjustment) in
+   the spec's JSON schema, appended to a persistent JSONL + markdown log. The
+   generator is deterministic/offline by default and accepts an `llm` callable
+   to upgrade it. **Suggested weight adjustments are logged for review, not
+   auto-applied** — `config.AUTO_APPLY_WEIGHT_ADJUSTMENTS` (default off) gates
+   that, and `run_analysis` retrieves recent reflections before each prediction.
 
 ## Scheduled jobs (all CST — `Asia/Shanghai`)
 

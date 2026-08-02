@@ -95,6 +95,29 @@ def build_signals(
     return signals
 
 
+_MAGNITUDE_DELTA = {"small": 0.02, "med": 0.05, "large": 0.10}
+
+
+def _apply_suggested_adjustments(weights: dict[str, float], reflections: list[dict]) -> dict:
+    """Apply the most recent reflection's suggested weight nudge, then
+    renormalize. Only reached when config.AUTO_APPLY_WEIGHT_ADJUSTMENTS is on;
+    until then suggestions are review-only (spec §4b-iii, human-in-the-loop)."""
+    import json
+
+    w = dict(weights)
+    try:
+        adj = json.loads(reflections[0].get("suggested_adjustment") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return w
+    signal, direction = adj.get("signal"), adj.get("direction")
+    if signal not in w or direction not in ("increase", "decrease"):
+        return w
+    delta = _MAGNITUDE_DELTA.get(adj.get("magnitude"), 0.02)
+    w[signal] = max(0.0, w[signal] + (delta if direction == "increase" else -delta))
+    total = sum(w.values()) or 1.0
+    return {k: round(v / total, 4) for k, v in w.items()}
+
+
 def run_analysis(trade_date: str | None = None) -> int:
     """Job entrypoint: read the day's data, score every sector, persist
     predictions. Returns the number of predictions written. Never raises."""
@@ -106,6 +129,15 @@ def run_analysis(trade_date: str | None = None) -> int:
         news_rows = db.get_rows_for_date("news", trade_date)
         macro = db.macro_event_dates(trade_date)
         weights = db.get_weights()
+
+        # Retrieve recent reflections before predicting (spec §4b-iii). Weight
+        # adjustments they suggest are applied only if auto-apply is enabled;
+        # otherwise they inform review, not this run's weights.
+        recent = db.recent_reflections(5)
+        if recent:
+            print(f"run_analysis: considering {len(recent)} recent reflection(s)")
+            if config.AUTO_APPLY_WEIGHT_ADJUSTMENTS:
+                weights = _apply_suggested_adjustments(weights, recent)
 
         signals = build_signals(us_rows, news_rows, macro)
         written = 0
