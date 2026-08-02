@@ -39,6 +39,20 @@ CHINA_INDICES = {
     "ChiNext": "sz399006",   # ChiNext
 }
 
+# Per-sector actuals for the accuracy scorecard. Liquid A-share sector ETFs are
+# used as the sector proxy — their codes are stable, unlike obscure sector-index
+# codes. {china_sector: ETF code}. Fetched via akshare's ETF history endpoint.
+# NOTE: verify each code against live akshare on first run — the ingestion job
+# fails soft per symbol, so a wrong/renamed code just leaves that sector
+# unscored (no crash) until corrected.
+CHINA_SECTOR_ETFS = {
+    "broad": "510300",       # CSI 300 ETF
+    "growth": "159915",      # ChiNext ETF
+    "semis": "512480",       # Semiconductor ETF
+    "energy": "159930",      # Energy ETF
+    "financials": "512800",  # Bank/financials ETF
+}
+
 NEWS_FEEDS = {
     "reuters": "https://feeds.reuters.com/reuters/businessNews",
     "caixin": "https://www.caixinglobal.com/rss/economics.xml",

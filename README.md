@@ -7,6 +7,9 @@ Chinese equity markets in a terminal-style dashboard.
 > **Not investment advice.** Output is a probabilistic signal for you to weigh
 > yourself — not a buy/sell instruction and not a guarantee of returns.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how the system runs — operating
+model, hosting, backend, and data flow.
+
 ## Top priority
 
 The **self-improvement / reflection loop** (spec §4b) — comparing each
@@ -34,7 +37,7 @@ oracle/
   ingestion/       # yfinance / akshare / RSS pulls with retries (§3)
     _retry.py      #   exponential-backoff retry helper
     us_market.py   #   US indices/ETFs/metals -> us_close
-    china_market.py#   China indices -> china_close
+    china_market.py#   China broad indices + sector ETFs -> china_close
     news.py        #   RSS -> tagged headlines -> news
   reflection/      # self-improvement loop (§4b, top priority)
     stats.py       #   pure math: pearson, best-fit lag, calibration/Brier
