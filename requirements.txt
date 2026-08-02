@@ -1,0 +1,18 @@
+# Core scheduling
+APScheduler>=3.10
+
+# Data ingestion (Phase 2 — not yet wired)
+yfinance>=0.2.40      # US indices, sector ETFs, precious metals
+akshare>=1.13         # China A-share indices / sectors / macro
+feedparser>=6.0       # World-news RSS (Reuters/Caixin/Bloomberg)
+
+# Analysis
+numpy>=1.26
+pandas>=2.1
+
+# Local API + dashboard (Phase 4/5)
+fastapi>=0.110
+uvicorn>=0.29
+
+# Dev / test
+pytest>=8.0
