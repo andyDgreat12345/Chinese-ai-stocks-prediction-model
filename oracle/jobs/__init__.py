@@ -30,6 +30,8 @@ def run_analysis() -> None:
     """05:00 CST — combine signals into a prediction (§4). Retrieves recent
     reflection-log entries first (§4b-iii) before producing the day's call."""
     _stamp("run_analysis")
+    from ..analysis.pipeline import run_analysis as _run
+    _run()
 
 
 def pre_open_refresh() -> None:

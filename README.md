@@ -30,13 +30,15 @@ oracle/
   analysis/
     scoring.py     # pure, testable weighted-signal scoring (§4)
     sentiment.py   # lexicon sentiment + category classifier (§4.2, v1)
+    pipeline.py    # build_signals (US→China + sentiment) -> predictions (§4)
   ingestion/       # yfinance / akshare / RSS pulls with retries (§3)
     _retry.py      #   exponential-backoff retry helper
     us_market.py   #   US indices/ETFs/metals -> us_close
     china_market.py#   China indices -> china_close
     news.py        #   RSS -> tagged headlines -> news
   reflection/      # scoring, correlation engine, LLM reflection (Phase 7)
-  api/             # FastAPI endpoints for the dashboard      (Phase 4)
+  api/
+    server.py      # FastAPI: /api/prediction /heatmap /history /accuracy (§5)
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
 
@@ -46,7 +48,8 @@ tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 pip install -r requirements.txt
 python -m oracle.db          # create data/oracle.db
 python -m pytest -q          # run tests
-python -m oracle.scheduler   # start the scheduler (jobs are stubs for now)
+python -m oracle.scheduler   # start the scheduler (ingestion + analysis wired)
+uvicorn oracle.api.server:app --port 8000   # serve the dashboard API
 ```
 
 ## Build roadmap (spec §6)
@@ -55,8 +58,8 @@ python -m oracle.scheduler   # start the scheduler (jobs are stubs for now)
 |---|---|---|
 | 1 | Scaffold: structure, APScheduler, SQLite schema | **done** |
 | 2 | Ingestion: `fetch_us_close` / `fetch_world_news` / `fetch_china_close` with retries | **done** |
-| 3 | Analysis engine: weighted scoring on live data | scoring fn + lexicon sentiment + tests done |
-| 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history` | todo |
+| 3 | Analysis engine: weighted scoring on live data | **done** (pipeline wired US→China + sentiment → predictions) |
+| 4 | Local FastAPI: `/api/prediction`, `/api/heatmap`, `/api/history`, `/api/accuracy` | **done** |
 | 5 | Dashboard: terminal UI, fetch from local API, 2 new panels | todo |
 | 6 | Scheduler wiring: connect jobs to real functions, mock time-shifted runs | todo |
 | 7 | **Reflection loop (§4b)**: scoring + calibration, correlation engine, reflection log | todo (top priority) |
