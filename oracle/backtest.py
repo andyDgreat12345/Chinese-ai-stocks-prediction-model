@@ -188,7 +188,7 @@ def calibration(records: list[dict]) -> dict:
 def run_backtest(start=None, end=None, db_path=None) -> dict:
     records = collect_records(start, end, db_path)
     dates = sorted({r["date"] for r in records})
-    return {
+    report = {
         "window": {"start": dates[0] if dates else None,
                    "end": dates[-1] if dates else None,
                    "trading_days": len(dates)},
@@ -196,6 +196,14 @@ def run_backtest(start=None, end=None, db_path=None) -> dict:
         "calibration": calibration(records),
         "n_records": len(records),
     }
+    # Attach the cost-aware, compounded, drawdown-aware view (imported lazily to
+    # avoid a circular import — costsim reuses this module's helpers).
+    try:
+        from . import costsim
+        report["cost_aware"] = costsim.run_cost_backtest(start, end, db_path)
+    except Exception as exc:  # never let the friction layer break the base report
+        report["cost_aware"] = {"error": str(exc)}
+    return report
 
 
 # ── reporting ────────────────────────────────────────────────────────────
@@ -236,6 +244,10 @@ def format_report(report: dict) -> str:
         "baselines on bet-accuracy AND Sharpe, with a small p-value (edge is "
         "real, not luck). Not investment advice.",
     ]
+    ca = report.get("cost_aware")
+    if ca and "error" not in ca:
+        from .costsim import format_cost_report
+        lines += ["", format_cost_report(ca)]
     return "\n".join(lines)
 
 

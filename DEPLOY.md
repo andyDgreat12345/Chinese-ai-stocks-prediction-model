@@ -187,5 +187,11 @@ minimum-sample guard doing its job, not a bug.
   wrong/renamed; check `fetch_china_close` logs and fix the code.
 - **No news** → some RSS feeds geo-block or rate-limit; check the feed URLs in
   `config.NEWS_FEEDS`. Jobs fail soft, so this won't crash anything.
+- **Sector ETFs won't load / connection reset** → Eastmoney's ETF endpoint
+  resets connections from some datacenter IPs (notably GitHub Actions' US
+  runners). Ingestion now falls back to **Sina** automatically
+  (`china_market.ETF_SOURCES`), which is reachable from those IPs. If both
+  sources fail, the host's IP is fully blocked from China data — use a
+  China-adjacent VPS (e.g. Hong Kong).
 - **Jobs not firing** → `systemctl status oracle-scheduler`; the SQLite jobstore
   persists across restarts, so a restart won't lose the schedule.

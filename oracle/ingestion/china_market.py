@@ -77,12 +77,58 @@ def _download_index(index_code: str):
     return ak.stock_zh_index_daily(symbol=index_code)
 
 
-@with_retries(attempts=4, base_delay=2.0)
-def _download_etf(etf_code: str):
-    """Recent daily rows for one sector ETF. akshare imported lazily."""
+def sina_etf_symbol(code: str) -> str:
+    """Prefix a bare ETF code with its Sina exchange segment. Shanghai funds
+    start with '5' (510300, 512480…), Shenzhen with '1' (159915…). Pure."""
+    code = str(code)
+    if code.startswith("1"):
+        return f"sz{code}"
+    return f"sh{code}"  # '5' and anything else -> Shanghai
+
+
+@with_retries(attempts=2, base_delay=2.0)
+def _etf_hist_em(code: str):
+    """Sector-ETF daily history from Eastmoney (richest, but its endpoint resets
+    connections from some datacenter IPs — see the Sina fallback)."""
     import akshare as ak
 
-    return ak.fund_etf_hist_em(symbol=etf_code, period="daily", adjust="")
+    return ak.fund_etf_hist_em(symbol=code, period="daily", adjust="")
+
+
+@with_retries(attempts=2, base_delay=2.0)
+def _etf_hist_sina(code: str):
+    """Sector-ETF daily history from Sina. Reachable from IPs that Eastmoney's
+    endpoint resets (the broad indices already load via Sina), so this is what
+    lets the sector ETFs come through without a China-routed host."""
+    import akshare as ak
+
+    return ak.fund_etf_hist_sina(symbol=sina_etf_symbol(code))
+
+
+# Ordered ETF data sources: try Eastmoney first (richer), fall back to Sina.
+ETF_SOURCES = (("eastmoney", _etf_hist_em), ("sina", _etf_hist_sina))
+
+
+def download_etf_history(code: str):
+    """Full daily history for one sector ETF, trying each source in ETF_SOURCES
+    until one returns usable rows. Shared by the daily job and the backfill so
+    both get the same fallback behavior. Raises only if every source fails."""
+    last_exc: Exception | None = None
+    for name, fn in ETF_SOURCES:
+        try:
+            df = fn(code)
+            if _to_records(df):
+                return df
+        except Exception as e:  # noqa: BLE001 — try the next source
+            last_exc = e
+            print(f"fetch_china_close: ETF {code} via {name} failed: {e!r}")
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
+# Back-compat alias: the collector calls this name.
+_download_etf = download_etf_history
 
 
 def _to_records(df) -> list[dict]:

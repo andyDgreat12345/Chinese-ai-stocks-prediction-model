@@ -118,4 +118,12 @@ jobs:
 
       - name: Deploy to Pages
         id: deploy
+        continue-on-error: true   # a not-yet-enabled Pages must not fail the data run
         uses: actions/deploy-pages@v4
+
+      - name: Pages setup hint
+        if: steps.deploy.outcome != 'success'
+        run: |
+          echo "::warning::Dashboard not published — enable GitHub Pages "\
+               "(Settings → Pages → Source: 'GitHub Actions') then re-run. "\
+               "The data jobs, backtest, and state persistence already succeeded."
