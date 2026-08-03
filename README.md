@@ -57,6 +57,7 @@ oracle/
                    #   /accuracy /leaderboard /news-impact /reflections
                    #   /weights /markets (§5, §4b)
   dashboard/       # terminal UI (index.html + static/{styles.css,app.js})
+  backfill.py      # one-shot historical loader (US + China) for the backtest
   backtest.py      # evaluation engine: replay history, baselines, Sharpe, p-value
 app.py             # `python app.py` -> backend + dashboard on localhost:8000
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
@@ -100,7 +101,8 @@ Real depth is proven by measurement, not asserted. The backtest engine
 there's a real edge:
 
 ```bash
-python -m oracle.backtest [start_date] [end_date]
+python -m oracle.backfill 180      # load ~180 days of real US + China history
+python -m oracle.backtest          # then judge the model against the baselines
 ```
 
 It reports, per strategy (model vs. always-bullish / US-direction / persistence):
