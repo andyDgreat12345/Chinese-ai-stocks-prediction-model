@@ -1,0 +1,121 @@
+name: Oracle
+
+# Zero-server deployment: run the daily jobs on a schedule, persist the growing
+# SQLite state on the `oracle-state` branch, build the static dashboard, and
+# publish it to GitHub Pages. See GITHUB_PAGES.md for one-time setup.
+#
+# NOTE: scheduled runs only fire once this workflow is on the repo's DEFAULT
+# branch (merge the PR first). Times are UTC; the app is CST (UTC+8).
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 05:00 CST — morning: US close + news + analysis
+    - cron: "15 7 * * *"   # 15:15 CST — afternoon: China close + reflection
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Which phase to run"
+        type: choice
+        default: all
+        options: [all, morning, afternoon, backfill, backtest]
+
+permissions:
+  contents: write   # push the oracle-state branch
+  pages: write      # deploy to Pages
+  id-token: write   # Pages OIDC
+
+concurrency:
+  group: oracle
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      ORACLE_DB: ${{ github.workspace }}/_state/oracle.db
+      ORACLE_REFLECTION_LOG: ${{ github.workspace }}/_state/reflection_log.jsonl
+      ORACLE_MACRO_FILE: ${{ github.workspace }}/_state/macro_events.json
+      # Optional LLM reflection backend (spec §4b-iii). Leave unset for the
+      # deterministic rule-based reflection. To enable: set repo variable
+      # ORACLE_LLM_PROVIDER (claude|deepseek) and the matching API-key secret.
+      ORACLE_LLM_PROVIDER: ${{ vars.ORACLE_LLM_PROVIDER }}
+      ORACLE_LLM_MODEL: ${{ vars.ORACLE_LLM_MODEL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore persisted state
+        run: |
+          mkdir -p _state
+          if git ls-remote --exit-code --heads origin oracle-state >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin oracle-state
+            git archive FETCH_HEAD | tar -x -C _state
+            echo "restored state from oracle-state branch"
+          else
+            echo "no oracle-state branch yet — starting fresh"
+          fi
+          # Seed the macro calendar on first run if none persisted.
+          if [ ! -f _state/macro_events.json ] && [ -f examples/macro_events.sample.json ]; then
+            cp examples/macro_events.sample.json _state/macro_events.json
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Determine phase
+        id: phase
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "phase=${{ github.event.inputs.phase }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
+            echo "phase=morning" >> "$GITHUB_OUTPUT"
+          else
+            echo "phase=afternoon" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run jobs (${{ steps.phase.outputs.phase }})
+        run: |
+          phase="${{ steps.phase.outputs.phase }}"
+          case "$phase" in
+            backfill)                    # one-time: load history, then show the backtest
+              python -m oracle.backfill 365
+              python -m oracle.backtest ;;
+            backtest)                    # just print the evaluation report to the log
+              python -m oracle.backtest ;;
+            *)                           # morning / afternoon / all daily jobs
+              python -m oracle.run "$phase" ;;
+          esac
+
+      - name: Build static site
+        run: python -m oracle.site_build site
+
+      - name: Persist state
+        run: |
+          cd _state
+          git init -q
+          git add -A
+          git -c user.name="oracle-bot" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "state: ${{ steps.phase.outputs.phase }} $(date -u +%FT%TZ)" \
+            || { echo "no state changes"; exit 0; }
+          git push -q -f \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            HEAD:oracle-state
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

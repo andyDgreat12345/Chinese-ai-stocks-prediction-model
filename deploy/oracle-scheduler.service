@@ -1,0 +1,18 @@
+[Unit]
+Description=China Market Oracle - scheduler (daily ingest/analysis/reflection jobs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+# Job timing uses APScheduler's Asia/Shanghai timezone internally, so the host
+# clock's timezone does not affect when jobs fire.
+ExecStart=__VENV__/bin/python -m oracle.scheduler
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
