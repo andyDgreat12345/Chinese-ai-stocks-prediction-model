@@ -84,6 +84,32 @@ def prediction() -> dict:
     }
 
 
+@app.get("/api/llm-calls")
+def llm_calls() -> dict:
+    """Latest AI research-desk calls (spec §4.2). Empty when no analyst provider
+    is configured — the rule-based prediction stands on its own then."""
+    import json as _json
+
+    rows = db.latest_llm_calls()
+    return {
+        "trade_date": rows[0]["trade_date"] if rows else None,
+        "disclaimer": config.DISCLAIMER,
+        "provider": rows[0]["provider"] if rows else None,
+        "model": rows[0]["model"] if rows else None,
+        "calls": [
+            {
+                "sector": r["sector"],
+                "direction": r["direction"],
+                "conviction": r["conviction"],
+                "tradeable_etf": r["tradeable_etf"],
+                "key_drivers": _json.loads(r["key_drivers"] or "[]"),
+                "rationale": r["rationale"],
+            }
+            for r in rows
+        ],
+    }
+
+
 @app.get("/api/heatmap")
 def heatmap() -> dict:
     """Sectors colored by the *predicted* China-sector score, not raw price (§5)."""

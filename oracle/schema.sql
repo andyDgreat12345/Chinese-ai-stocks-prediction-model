@@ -79,6 +79,27 @@ CREATE TABLE IF NOT EXISTS prediction_scores (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- LLM RESEARCH DESK (optional AI analyst — spec §4.2/§7b)
+-- The LLM analyst's per-sector buy/sell/hold calls are recorded as a SEPARATE
+-- source alongside the rule-based `predictions`, never replacing them, so the
+-- backtest can score the LLM's edge against the rule-based model and baselines.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date    TEXT NOT NULL,          -- the China session being called
+    sector        TEXT NOT NULL,
+    provider      TEXT,                   -- deepseek / claude
+    model         TEXT,
+    direction     TEXT NOT NULL,          -- bullish / neutral / bearish
+    conviction    TEXT NOT NULL,          -- low / med / high
+    tradeable_etf TEXT,                   -- foreign-accessible proxy (ASHR/KWEB/...)
+    key_drivers   TEXT,                   -- JSON array of strings
+    rationale     TEXT,
+    created_at    TEXT NOT NULL,
+    UNIQUE (trade_date, sector)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- US → CHINA INFLUENCE MEASUREMENT (spec §4b-ii)
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS correlations (

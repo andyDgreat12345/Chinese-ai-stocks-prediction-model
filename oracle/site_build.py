@@ -20,6 +20,7 @@ from .db import init_db
 # name -> callable returning the JSON-able payload (defaults match the API).
 ENDPOINTS = {
     "prediction": server.prediction,
+    "llm-calls": server.llm_calls,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

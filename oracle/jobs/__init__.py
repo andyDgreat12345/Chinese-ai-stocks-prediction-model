@@ -37,6 +37,16 @@ def run_analysis() -> None:
     _run()
 
 
+def run_llm_analysis() -> None:
+    """05:05 CST — optional AI research desk (§4.2/§7b). Runs right after the
+    rule-based prediction, on the same data, and records the LLM's per-sector
+    buy/sell/hold calls separately. No-ops when no analyst provider is
+    configured, so the rule-based path is unaffected."""
+    _stamp("run_llm_analysis")
+    from ..analysis.llm_analyst import run_llm_analysis as _run
+    _run()
+
+
 def pre_open_refresh() -> None:
     """09:15 CST — re-check 05:00–09:15 breaking news, adjust confidence."""
     _stamp("pre_open_refresh")
@@ -73,6 +83,7 @@ REGISTRY = {
     "fetch_us_close": fetch_us_close,
     "fetch_world_news": fetch_world_news,
     "run_analysis": run_analysis,
+    "run_llm_analysis": run_llm_analysis,
     "pre_open_refresh": pre_open_refresh,
     "fetch_china_close": fetch_china_close,
     "reflect_and_update": reflect_and_update,

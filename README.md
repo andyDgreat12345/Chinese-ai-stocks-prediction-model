@@ -40,6 +40,7 @@ oracle/
     scoring.py     # pure, testable weighted-signal scoring (§4)
     sentiment.py   # lexicon sentiment + category classifier (§4.2, v1)
     pipeline.py    # build_signals (US→China + sentiment) -> predictions (§4)
+    llm_analyst.py # optional AI research desk: LLM buy/sell/hold calls (§4.2)
   ingestion/       # yfinance / akshare / RSS pulls with retries (§3)
     _retry.py      #   exponential-backoff retry helper
     us_market.py   #   US indices/ETFs/metals -> us_close
@@ -132,6 +133,37 @@ Sector calls are labeled with the foreign-accessible instrument they approximate
 (`config.SECTOR_TRADEABLE_ETF` → ASHR/MCHI/FXI/KWEB), with the explicit caveat
 that the P&L series comes from the A-share sector-ETF proxy we ingest, not the
 US-listed fund itself.
+
+## The AI research desk (optional — `oracle/analysis/llm_analyst.py`)
+
+An optional LLM analyst that reads the same day's data — US closes, overnight
+news, macro calendar, and the reflection log (what has worked before) — and
+produces a structured per-sector **buy/sell/hold call** with conviction, key
+drivers, and the foreign-tradeable ETF (ASHR/KWEB/…) each call maps to.
+
+- **Provider-agnostic, off by default.** DeepSeek (its OpenAI-compatible
+  endpoint) or Claude (Anthropic SDK). Enable with two env vars; unset = the
+  rule-based pipeline runs alone.
+
+  ```bash
+  export ORACLE_ANALYST_PROVIDER=deepseek   # or claude
+  export DEEPSEEK_API_KEY=sk-...            # or ANTHROPIC_API_KEY
+  python -m oracle.run run_llm_analysis      # produce today's AI calls
+  ```
+
+  On GitHub Actions, set repo **variable** `ORACLE_ANALYST_PROVIDER` + the
+  matching key **secret** — the daily `morning` phase then runs it automatically.
+
+- **Recorded separately, never silently trusted.** The LLM's calls land in their
+  own `llm_calls` table alongside the rule-based `predictions` — so the backtest
+  can measure the analyst's edge against the rule-based model and the naive
+  baselines *before* any real money. A confident LLM pick is a hypothesis to be
+  scored, not a fact.
+- **Fail-soft + honest.** Any error or refusal leaves the rule-based prediction
+  as the sole record. Output is a probabilistic signal with the standard
+  disclaimer — not a buy/sell instruction, never auto-executed. (Note: DeepSeek's
+  *API* has no live web search — the analyst reasons over the ingested RSS news;
+  a live-search feed is a clean future add-on.)
 
 ## The reflection loop (§4b — top priority)
 
