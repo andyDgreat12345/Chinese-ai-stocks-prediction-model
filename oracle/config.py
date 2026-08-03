@@ -58,6 +58,21 @@ CHINA_SECTOR_ETFS = {
     "financials": "512800",  # Bank/financials ETF
 }
 
+# Foreign-accessible instrument each sector maps to — what a non-mainland
+# investor could actually trade (US-listed China ETFs). Used ONLY to LABEL the
+# cost-aware backtest so the read is concrete ("this sector call ≈ buying KWEB").
+# The return series in the backtest still comes from the A-share sector-ETF close
+# we ingest (CHINA_SECTOR_ETFS): a close proxy, but NOT identical — the US-listed
+# funds differ in tracking basket, trade in US hours, and carry FX exposure. Treat
+# the mapping as directional context, not a claim the P&L is literally tradeable.
+SECTOR_TRADEABLE_ETF = {
+    "broad": "ASHR",        # CSI 300 A-shares (direct analogue); MCHI is broader
+    "growth": "KWEB",       # China internet/growth
+    "semis": "KWEB",        # no pure US-listed China-semis ETF — tech/internet proxy
+    "energy": "FXI",        # large-cap, energy majors included (loose proxy)
+    "financials": "FXI",    # large-cap, financials-heavy
+}
+
 NEWS_FEEDS = {
     "reuters": "https://feeds.reuters.com/reuters/businessNews",
     "caixin": "https://www.caixinglobal.com/rss/economics.xml",

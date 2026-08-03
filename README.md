@@ -59,6 +59,7 @@ oracle/
   dashboard/       # terminal UI (index.html + static/{styles.css,app.js})
   backfill.py      # one-shot historical loader (US + China) for the backtest
   backtest.py      # evaluation engine: replay history, baselines, Sharpe, p-value
+  costsim.py       # cost-aware net returns: friction, drawdown, break-even
 app.py             # `python app.py` -> backend + dashboard on localhost:8000
 tests/             # fixture-driven tests (scoring, sentiment, ingestion)
 ```
@@ -112,6 +113,25 @@ directional accuracy, **paper-trading return + annualized Sharpe**, and a
 model only earns its keep if it beats the baselines on bet-accuracy *and* Sharpe
 with a small p-value. This is the honest gate before trusting it with money —
 and it makes every future data source or research agent a measured experiment.
+
+### Cost-aware net returns (`oracle/costsim.py`)
+
+Gross accuracy is not money. The cost-aware layer replays the same bets through
+a friction model — commission + slippage (default 15 bps round trip), equal-weight
+position sizing, and **compounded** daily returns — and reports what actually
+matters: **net** return, **net** Sharpe, **maximum drawdown**, and the
+**break-even friction** (how expensive trading can get before the edge is eaten;
+a small number means a fragile edge). It runs automatically as a section of
+`python -m oracle.backtest`, or standalone to stress the cost assumptions:
+
+```bash
+python -m oracle.costsim 2.5 5 1.0   # commission_bps  slippage_bps  gross_exposure
+```
+
+Sector calls are labeled with the foreign-accessible instrument they approximate
+(`config.SECTOR_TRADEABLE_ETF` → ASHR/MCHI/FXI/KWEB), with the explicit caveat
+that the P&L series comes from the A-share sector-ETF proxy we ingest, not the
+US-listed fund itself.
 
 ## The reflection loop (§4b — top priority)
 
