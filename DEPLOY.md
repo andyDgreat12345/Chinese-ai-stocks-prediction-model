@@ -20,6 +20,19 @@ sudo apt update && sudo apt install -y python3 python3-venv git
 
 ---
 
+## Quick path (one command)
+
+```bash
+cd ~
+git clone <your-repo-url> oracle && cd oracle && git checkout main
+bash deploy/bootstrap.sh 365      # venv + deps + DB + macro seed + backfill + first backtest
+sudo bash deploy/install.sh       # install the always-on services
+```
+
+That's the whole thing — `bootstrap.sh` also runs the **first real backtest** so
+you immediately see whether the model beats the baselines on real data. The
+sections below explain each step if you'd rather do them by hand.
+
 ## 1. Get the code
 
 ```bash
@@ -36,6 +49,8 @@ python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m oracle.db      # create data/oracle.db
+.venv/bin/python -m oracle.backfill 365   # load a year of real US+China history
+.venv/bin/python -m oracle.backtest       # first real read on the model's edge
 ```
 
 ## 3. Configure
