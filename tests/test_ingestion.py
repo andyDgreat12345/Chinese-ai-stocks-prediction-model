@@ -76,6 +76,50 @@ def test_china_normalize_uses_sector_tags():
     assert rows[0]["pct_change"] == 3.0
 
 
+def test_sina_etf_symbol_prefix():
+    assert china_market.sina_etf_symbol("510300") == "sh510300"  # Shanghai
+    assert china_market.sina_etf_symbol("512480") == "sh512480"
+    assert china_market.sina_etf_symbol("159915") == "sz159915"  # Shenzhen
+    assert china_market.sina_etf_symbol(159930) == "sz159930"    # int tolerated
+
+
+def test_download_etf_falls_back_to_sina_when_eastmoney_fails(monkeypatch):
+    calls = []
+
+    def em_reset(code):
+        calls.append("eastmoney")
+        raise ConnectionError("Remote end closed connection without response")
+
+    def sina_ok(code):
+        calls.append("sina")
+        return [{"date": "2026-08-01", "close": 1.0}]  # non-empty -> usable
+
+    monkeypatch.setattr(china_market, "ETF_SOURCES",
+                        (("eastmoney", em_reset), ("sina", sina_ok)))
+    df = china_market.download_etf_history("512480")
+    assert df == [{"date": "2026-08-01", "close": 1.0}]
+    assert calls == ["eastmoney", "sina"]   # tried EM first, then Sina
+
+
+def test_download_etf_skips_empty_source_and_tries_next(monkeypatch):
+    # a source that returns an empty frame is treated as a miss, not a success
+    monkeypatch.setattr(china_market, "ETF_SOURCES", (
+        ("eastmoney", lambda code: []),
+        ("sina", lambda code: [{"date": "d", "close": 2.0}]),
+    ))
+    assert china_market.download_etf_history("510300") == [{"date": "d", "close": 2.0}]
+
+
+def test_download_etf_raises_when_all_sources_fail(monkeypatch):
+    def boom(code):
+        raise ConnectionError("reset")
+
+    monkeypatch.setattr(china_market, "ETF_SOURCES",
+                        (("eastmoney", boom), ("sina", boom)))
+    with pytest.raises(ConnectionError):
+        china_market.download_etf_history("512800")
+
+
 def test_parse_feed_tags_sentiment_and_category():
     fixture = {"entries": [
         {"title": "Fed signals rate cut, stocks rally", "summary": "<p>Markets surge.</p>"},

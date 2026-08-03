@@ -21,7 +21,11 @@ from datetime import datetime, timezone
 from . import config
 from .db import upsert_market_close
 from .ingestion._retry import with_retries
-from .ingestion.china_market import ETF_SECTOR_TAGS, INDEX_SECTOR_TAGS
+from .ingestion.china_market import (
+    ETF_SECTOR_TAGS,
+    INDEX_SECTOR_TAGS,
+    download_etf_history,
+)
 from .ingestion.us_market import SECTOR_TAGS as US_SECTOR_TAGS
 
 _DATE_KEYS = ("date", "日期", "Date", "trade_date")
@@ -101,10 +105,11 @@ def _download_china_index(code: str):
     return ak.stock_zh_index_daily(symbol=code)
 
 
-@with_retries(attempts=3, base_delay=2.0)
 def _download_china_etf(code: str):
-    import akshare as ak
-    return ak.fund_etf_hist_em(symbol=code, period="daily", adjust="")
+    """Full ETF history via the shared Eastmoney→Sina fallback chain (retries
+    live inside each source), so the backfill loads sector ETFs from the same
+    IPs that reset Eastmoney."""
+    return download_etf_history(code)
 
 
 def _to_records(df) -> list[dict]:
