@@ -17,7 +17,7 @@ on:
         description: "Which phase to run"
         type: choice
         default: all
-        options: [all, morning, afternoon]
+        options: [all, morning, afternoon, backfill, backtest]
 
 permissions:
   contents: write   # push the oracle-state branch
@@ -83,7 +83,17 @@ jobs:
           fi
 
       - name: Run jobs (${{ steps.phase.outputs.phase }})
-        run: python -m oracle.run "${{ steps.phase.outputs.phase }}"
+        run: |
+          phase="${{ steps.phase.outputs.phase }}"
+          case "$phase" in
+            backfill)                    # one-time: load history, then show the backtest
+              python -m oracle.backfill 365
+              python -m oracle.backtest ;;
+            backtest)                    # just print the evaluation report to the log
+              python -m oracle.backtest ;;
+            *)                           # morning / afternoon / all daily jobs
+              python -m oracle.run "$phase" ;;
+          esac
 
       - name: Build static site
         run: python -m oracle.site_build site
