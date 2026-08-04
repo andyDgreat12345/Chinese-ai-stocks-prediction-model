@@ -20,17 +20,31 @@ BULLISH_THRESHOLD = 0.15
 BEARISH_THRESHOLD = -0.15
 
 
+# Every component the composite can weight. Weight dicts may carry any subset;
+# absent keys contribute nothing, so old 3-signal weights behave exactly as before.
+SIGNAL_KEYS = ("us_spillover", "sentiment", "macro",
+               "rsi_signal", "momentum_signal", "trend_signal")
+
+
 @dataclass(frozen=True)
 class SectorSignals:
     """Component signals for one China sector on one day.
 
     All scores are normalized to roughly -1 (bearish) .. +1 (bullish).
     `macro_flag` is a manual dominance signal for scheduled events.
+
+    The three technical fields come from the sector's OWN price history
+    (`analysis/technicals.py`): mean-reversion from RSI, trend-following from
+    momentum, and position vs. the moving averages. They default to 0.0 so a
+    caller that doesn't supply them scores exactly as before.
     """
     us_spillover: float
     sentiment: float
     macro: float = 0.0
     macro_flag: bool = False
+    rsi_signal: float = 0.0
+    momentum_signal: float = 0.0
+    trend_signal: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -41,15 +55,16 @@ class Prediction:
     rationale: str
 
 
-def _bucket(score: float) -> str:
-    if score >= BULLISH_THRESHOLD:
+def _bucket(score: float, threshold: float = BULLISH_THRESHOLD) -> str:
+    if score >= threshold:
         return "bullish"
-    if score <= BEARISH_THRESHOLD:
+    if score <= -threshold:
         return "bearish"
     return "neutral"
 
 
-def _confidence(signals: SectorSignals, composite: float) -> str:
+def _confidence(signals: SectorSignals, composite: float,
+                threshold: float = BULLISH_THRESHOLD) -> str:
     """Confidence rises with signal agreement, falls when signals disagree.
 
     Per spec §4.4: if US spillover and news sentiment point opposite ways,
@@ -63,11 +78,11 @@ def _confidence(signals: SectorSignals, composite: float) -> str:
 
     if disagree:
         return "low"
-    if signals.macro_flag and abs(composite) >= BULLISH_THRESHOLD:
+    if signals.macro_flag and abs(composite) >= threshold:
         return "high"
-    if agree and abs(composite) >= BULLISH_THRESHOLD:
+    if agree and abs(composite) >= threshold:
         return "high"
-    if abs(composite) >= BULLISH_THRESHOLD:
+    if abs(composite) >= threshold:
         return "med"
     return "low"
 
@@ -83,18 +98,22 @@ def _sign(x: float) -> int:
 def score_sector(
     signals: SectorSignals,
     weights: dict[str, float] | None = None,
+    threshold: float | None = None,
 ) -> Prediction:
-    """Combine component signals into a bucketed directional prediction."""
+    """Combine component signals into a bucketed directional prediction.
+
+    ``threshold`` is the |composite| above which a directional call is made
+    (below it the model abstains as neutral). It defaults to the module constant
+    but is *learnable* — the walk-forward tuner fits it per sector alongside the
+    weights (see ``oracle/learning/``)."""
     w = weights or DEFAULT_WEIGHTS
-    composite = (
-        w["us_spillover"] * signals.us_spillover
-        + w["sentiment"] * signals.sentiment
-        + w["macro"] * signals.macro
-    )
+    thr = BULLISH_THRESHOLD if threshold is None else float(threshold)
+    composite = sum(float(w.get(k, 0.0)) * float(getattr(signals, k, 0.0))
+                    for k in SIGNAL_KEYS)
     composite = max(-1.0, min(1.0, composite))
 
-    direction = _bucket(composite)
-    confidence = _confidence(signals, composite)
+    direction = _bucket(composite, thr)
+    confidence = _confidence(signals, composite, thr)
 
     parts = [
         f"US spillover {signals.us_spillover:+.2f}",

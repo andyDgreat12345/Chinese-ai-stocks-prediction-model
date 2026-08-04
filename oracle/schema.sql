@@ -177,6 +177,36 @@ CREATE TABLE IF NOT EXISTS weights (
     updated_at      TEXT NOT NULL
 );
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- LEARNED MODEL PARAMETERS + LEARNING LEDGER (§4b — the self-improvement core)
+-- The walk-forward tuner (oracle/learning/) fits signal weights AND the
+-- abstain threshold, PER SECTOR, on past data and validates them on a holdout
+-- window the search never saw. Adopted parameter sets land here; every run —
+-- adopted or rejected — is appended to learning_log so the accuracy curve is
+-- auditable and a bad change can be traced and rolled back.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS model_params (
+    sector      TEXT PRIMARY KEY,     -- china sector, or '*' for the global default
+    params      TEXT NOT NULL,        -- JSON {us_spillover, sentiment, macro, threshold}
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS learning_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_date       TEXT NOT NULL,
+    sector         TEXT NOT NULL,
+    params_before  TEXT,              -- JSON
+    params_after   TEXT,              -- JSON (== before when not adopted)
+    score_before   REAL,              -- incumbent objective on the holdout
+    score_after    REAL,              -- candidate objective on the SAME holdout
+    hit_before     REAL,              -- holdout directional hit-rate, incumbent
+    hit_after      REAL,              -- holdout directional hit-rate, candidate
+    n_holdout      INTEGER,           -- scored records in the holdout window
+    adopted        INTEGER NOT NULL,  -- 1 = the change was applied
+    reason         TEXT,              -- why adopted / why refused
+    created_at     TEXT NOT NULL
+);
+
 -- Seed default weights (equal-ish start; tuned later by the reflection loop).
 INSERT OR IGNORE INTO weights (signal, current_weight, suggested_weight, updated_at)
 VALUES

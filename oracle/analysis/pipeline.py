@@ -95,6 +95,30 @@ def build_signals(
     return signals
 
 
+def attach_technicals(signals: dict, trade_date: str, db_path=None) -> dict:
+    """Add each sector's technical signals, computed only from closes STRICTLY
+    BEFORE `trade_date` — the same rule the backtest replay uses, so live and
+    replayed predictions are produced from identical information. Fail-soft: a
+    sector with too little history keeps its zeroed technical fields."""
+    from dataclasses import replace
+
+    from .. import config, db
+    from . import technicals as ta
+
+    out = {}
+    for sector, sig in signals.items():
+        symbol = config.CHINA_SECTOR_ETFS.get(sector)
+        try:
+            closes = [r["close"] for r in db.close_series(
+                "china_close", symbol=symbol, limit=120, before=trade_date,
+                db_path=db_path) if r["close"] is not None]
+            out[sector] = (replace(sig, **ta.signals_from_closes(closes))
+                           if len(closes) >= 2 else sig)
+        except Exception:  # noqa: BLE001 — technicals are additive, never fatal
+            out[sector] = sig
+    return out
+
+
 def pre_open_refresh(trade_date: str | None = None) -> int:
     """09:15 CST confidence re-check (spec §2). Re-scores today's sectors on the
     latest news (any 05:00–09:15 breaking headlines the job just pulled) and
@@ -192,9 +216,14 @@ def run_analysis(trade_date: str | None = None) -> int:
                 weights = _apply_suggested_adjustments(weights, recent)
 
         signals = build_signals(us_rows, news_rows, macro)
+        signals = attach_technicals(signals, trade_date)
         written = 0
         for sector, sig in signals.items():
-            pred = score_sector(sig, weights)
+            # Per-sector LEARNED parameters (weights + abstain threshold) when the
+            # tuner has adopted any; otherwise this falls back to the global
+            # weights row and the hand-set defaults, unchanged.
+            p = db.get_model_params(sector)
+            pred = score_sector(sig, p, p.get("threshold"))
             db.upsert_prediction({
                 "trade_date": trade_date,
                 "sector": sector,

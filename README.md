@@ -263,6 +263,51 @@ Three layers make the analysis specific and technical instead of broad:
   follower and to lean on domestic technicals/news for a diverger (e.g. AI-type
   themes that move on their own catalysts). Surfaced per sector in the daily report.
 
+## The learning loop (`oracle/learning/` — how accuracy actually improves)
+
+The reflection log describes what went wrong; this *fixes* it. Every afternoon,
+after the day's result is scored, `autotune` refits the model's parameters —
+the per-signal weights **and** the abstain threshold — **per sector**, and adopts
+a change only when it is measurably better on days the search never saw.
+
+```bash
+python -m oracle.learning.autotune              # fit, judge, adopt-or-refuse
+python -m oracle.learning.autotune --report     # current params + learning ledger
+python -m oracle.learning.autotune --rollback semis   # undo a sector's last change
+```
+
+**The protocol** (`walkforward.py`), designed so improvement can't be faked:
+
+1. the most recent `LEARNING_HOLDOUT_DAYS` (45) are cut off and **never touched
+   by the search**;
+2. **walk-forward folds** over the rest — expanding train window, next slice as
+   validation, always predicting forward;
+3. the winner is **blended** only `LEARNING_STEP` (½) of the way from the
+   incumbent, so one noisy fit can't throw the model across the space;
+4. the *blended* set — exactly what would be stored — is re-scored against the
+   incumbent **on the untouched holdout**;
+5. it is adopted only if it clears `LEARNING_MIN_IMPROVEMENT`, with enough bets
+   behind it, and the sector isn't in its post-adoption **cooldown** (the holdout
+   only refreshes as days pass; adopting daily would burn it in).
+
+Every attempt — adopted or refused — is written to `learning_log` with
+before/after holdout hit-rates, so the accuracy curve is auditable and any
+regression is traceable and reversible. **Most runs correctly refuse**; that's
+the mechanism working, not failing.
+
+**What it learns from.** The scorer weights six components, and the tuner only
+ever puts weight on signals that actually *vary* in the data (a weight on a dead
+signal is a phantom parameter that silently rescales the composite). Alongside
+US spillover and news sentiment it can now weight the sector's **own technical
+state** — `rsi_signal` (mean reversion), `momentum_signal` (trend following, the
+deliberate opposite bet), and `trend_signal` — so it can discover which
+hypothesis pays per sector rather than being told.
+
+> **No lookahead.** Technicals feeding a prediction *about* day *d* are computed
+> only from closes **strictly before** *d* (`db.close_series(before=…)`). In a
+> replay the target day's close is already in the DB, so using it would hand the
+> model the answer and silently inflate every accuracy number downstream.
+
 ## The reflection loop (§4b — top priority)
 
 Runs at 15:15 CST once the actual China close is in (`reflect_and_update`), as

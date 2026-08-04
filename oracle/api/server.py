@@ -123,6 +123,30 @@ def report() -> dict:
     return r
 
 
+@app.get("/api/learning")
+def learning() -> dict:
+    """Self-improvement state (§4b): the per-sector parameters the walk-forward
+    tuner has adopted, and the ledger of every attempt — the auditable record of
+    whether the model is actually getting better on held-out days."""
+    history = db.learning_history(40)
+    adopted = [h for h in history if h["adopted"]]
+    return {
+        "disclaimer": config.DISCLAIMER,
+        "enabled": config.LEARNING_ENABLED,
+        "holdout_days": config.LEARNING_HOLDOUT_DAYS,
+        "params": db.all_model_params(),
+        "n_attempts": len(history),
+        "n_adopted": len(adopted),
+        "history": [
+            {"run_date": h["run_date"], "sector": h["sector"],
+             "adopted": bool(h["adopted"]), "hit_before": h["hit_before"],
+             "hit_after": h["hit_after"], "n_holdout": h["n_holdout"],
+             "reason": h["reason"]}
+            for h in history
+        ],
+    }
+
+
 @app.get("/api/llm-usage")
 def llm_usage() -> dict:
     """AI research spend meter (§4.2 cost governance): token + estimated-USD

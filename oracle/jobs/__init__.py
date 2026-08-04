@@ -79,6 +79,17 @@ def reflect_and_update() -> None:
     generate_reflection()      # (iii) structured reflection log entry
 
 
+def autotune() -> None:
+    """15:30 CST — the empirical learning pass. Refits per-sector signal weights
+    and the abstain threshold on all scored history, judges the candidate on a
+    holdout window the search never saw, and adopts it ONLY if it measurably
+    beats the incumbent. Runs after reflection so the day's fresh score is
+    already in the training data."""
+    _stamp("autotune")
+    from ..learning.autotune import run_autotune
+    run_autotune()
+
+
 REGISTRY = {
     "fetch_us_close": fetch_us_close,
     "fetch_world_news": fetch_world_news,
@@ -87,4 +98,5 @@ REGISTRY = {
     "pre_open_refresh": pre_open_refresh,
     "fetch_china_close": fetch_china_close,
     "reflect_and_update": reflect_and_update,
+    "autotune": autotune,
 }

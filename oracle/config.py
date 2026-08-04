@@ -9,6 +9,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a boolean env override ('0'/'false'/'off' disable). Absent = default."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() not in ("0", "false", "off", "no")
+
 # ── Paths ────────────────────────────────────────────────────────────────
 # Each is overridable by env var so a stateless runner (e.g. GitHub Actions)
 # can point the DB + logs at a persisted state directory between runs.
@@ -123,7 +131,39 @@ CORRELATION_WINDOWS = [30, 60, 90]  # rolling windows (trading days)
 
 # Weight adjustments suggested by the reflection LLM are logged for review,
 # NOT auto-applied, until this is flipped on (spec §4b-iii, human-in-the-loop).
+# NOTE: this gates the *LLM's* qualitative suggestions, which carry no
+# out-of-sample proof. The empirical learner below is a different mechanism: it
+# only ever adopts a change that measurably beat the incumbent on held-out days.
 AUTO_APPLY_WEIGHT_ADJUSTMENTS = False
+
+# ── Empirical learning loop (oracle/learning/) ───────────────────────────
+# The walk-forward tuner fits signal weights + the abstain threshold per sector
+# and adopts a change ONLY when it beats the incumbent on a holdout window the
+# search never saw. Every guard below exists to stop the model chasing noise.
+LEARNING_ENABLED = _env_flag("ORACLE_LEARNING", True)
+# Most-recent trading days reserved as the untouched judgement set. Bigger =
+# a more reliable adoption decision (fewer flukes) at the cost of training data.
+LEARNING_HOLDOUT_DAYS = int(os.environ.get("ORACLE_LEARNING_HOLDOUT_DAYS") or 45)
+# Walk-forward folds used to select a candidate on the remaining history.
+LEARNING_FOLDS = int(os.environ.get("ORACLE_LEARNING_FOLDS") or 3)
+# Refuse to judge on a holdout thinner than this many scored records / bets.
+LEARNING_MIN_HOLDOUT_RECORDS = int(os.environ.get("ORACLE_LEARNING_MIN_RECORDS") or 20)
+LEARNING_MIN_HOLDOUT_BETS = int(os.environ.get("ORACLE_LEARNING_MIN_BETS") or 8)
+# Fraction of the way to move from the incumbent toward the fitted candidate.
+# Chosen a priori as a damping default ("move halfway to the evidence"), NOT
+# fitted on the holdout — tuning this on holdout results would be exactly the
+# overfitting the holdout exists to prevent. It changes how OFTEN the model
+# adopts, never whether an adopted change was validated.
+LEARNING_STEP = float(os.environ.get("ORACLE_LEARNING_STEP") or 0.5)
+# Required out-of-sample edge_t gain before a change is adopted at all.
+LEARNING_MIN_IMPROVEMENT = float(os.environ.get("ORACLE_LEARNING_MIN_GAIN") or 0.15)
+# Days a sector must wait between adopted changes. The holdout is the most recent
+# N trading days, so it only *refreshes* as time passes; adopting every day would
+# repeatedly re-test against nearly the same window and slowly burn it in —
+# selection pressure disguised as learning. Waiting lets genuinely new days
+# accumulate before the next change is judged.
+LEARNING_ADOPT_COOLDOWN_DAYS = int(
+    os.environ.get("ORACLE_LEARNING_COOLDOWN_DAYS") or 5)
 
 # ── Live web search (optional — augments the AI analyst) ─────────────────
 # DeepSeek's API has no web search, so we run it ourselves and feed the results

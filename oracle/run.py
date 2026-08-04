@@ -15,7 +15,7 @@ from .jobs import REGISTRY
 # Canonical daily order (matches the CST schedule).
 ORDER = [
     "fetch_us_close", "fetch_world_news", "run_analysis", "run_llm_analysis",
-    "pre_open_refresh", "fetch_china_close", "reflect_and_update",
+    "pre_open_refresh", "fetch_china_close", "reflect_and_update", "autotune",
 ]
 
 # Named phases for a two-run automated cadence (e.g. GitHub Actions): the
@@ -23,7 +23,7 @@ ORDER = [
 # China close) scores it and reflects.
 GROUPS = {
     "morning": ["fetch_us_close", "fetch_world_news", "run_analysis", "run_llm_analysis"],
-    "afternoon": ["fetch_china_close", "reflect_and_update"],
+    "afternoon": ["fetch_china_close", "reflect_and_update", "autotune"],
     "all": ORDER,
 }
 
