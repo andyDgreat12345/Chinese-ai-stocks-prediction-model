@@ -61,6 +61,9 @@ jobs:
       # API has no web search, so we run it ourselves and feed results into the
       # prompt. Off unless set: repo variable ORACLE_SEARCH_PROVIDER (tavily|brave)
       # + the matching key secret. Optional per-query price for the meter.
+      # Near-real-time quote snapshots for the picked names (Sina). Fully
+      # fail-soft; on by default here, disable by setting the variable to "off".
+      ORACLE_QUOTES_PROVIDER: ${{ vars.ORACLE_QUOTES_PROVIDER || 'sina' }}
       ORACLE_SEARCH_PROVIDER: ${{ vars.ORACLE_SEARCH_PROVIDER }}
       ORACLE_SEARCH_PRICE_PER_QUERY: ${{ vars.ORACLE_SEARCH_PRICE_PER_QUERY }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
