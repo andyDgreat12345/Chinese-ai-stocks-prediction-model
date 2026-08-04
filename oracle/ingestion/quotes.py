@@ -20,6 +20,7 @@ the pipeline is unchanged until opted in).
 from __future__ import annotations
 
 import os
+import sys
 
 # Sina requires a finance.sina Referer or it 403s.
 _SINA_URL = "https://hq.sinajs.cn/list="
@@ -108,7 +109,8 @@ def _fetch_sina(tickers: list[str]) -> dict[str, dict]:
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 — fixed host
             text = r.read().decode("gb18030", "ignore")
     except Exception as e:  # noqa: BLE001 — network is best-effort
-        print(f"quotes: sina fetch failed ({e!r})")
+        # stderr, so a blocked endpoint never leaks into report.md / the email.
+        print(f"quotes: sina fetch failed ({e!r})", file=sys.stderr)
         return {}
     by_sym = {}
     for line in text.splitlines():
