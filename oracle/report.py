@@ -116,7 +116,19 @@ def merge_sector(sector: str, pred: dict | None, call: dict | None) -> dict | No
         "rank": rank,
         "drivers": drivers,
         "rationale": str(rationale)[:400],
+        "pick": _pick_from(call),
     }
+
+
+def _pick_from(call: dict | None):
+    """Parse the AI analyst's single-name pick (stored as a JSON string)."""
+    raw = (call or {}).get("top_pick")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return raw if isinstance(raw, dict) and raw.get("ticker") else None
 
 
 def _us_summary(us_rows: list[dict]) -> str:
@@ -170,6 +182,11 @@ def _line(m: dict) -> list[str]:
                 f"{_DIR_ARROW.get(m['consensus'], m['consensus'])}, "
                 f"{m['conviction']} conviction ({m['source']})")
     out = [head]
+    if m.get("pick"):
+        p = m["pick"]
+        trad = f", tradeable {p['tradeable']}" if p.get("tradeable") else ""
+        note = f" — {p['note']}" if p.get("note") else ""
+        out.append(f"  - name to watch: {p.get('name', p['ticker'])} ({p['ticker']}{trad}){note}")
     if m.get("tech"):
         out.append(f"  - technicals: {m['tech']}")
     if m["drivers"]:

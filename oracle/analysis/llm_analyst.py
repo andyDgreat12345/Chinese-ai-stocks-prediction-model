@@ -63,10 +63,16 @@ _SYSTEM = (
     "specific prices, figures, tickers, or events that were not given. Prefer recent "
     "web results over stale ones and do not over-weight a single headline. Output is a "
     "probabilistic lean for a human to weigh, NOT investment advice, NOT a guarantee, "
-    "and NEVER a buy/sell instruction. Return STRICT JSON with exactly this shape: "
+    "and NEVER a buy/sell instruction. For each sector also name the single best "
+    "candidate to WATCH from the provided `stock_candidates` for that sector (pick "
+    "the one the evidence favors; use its EXACT ticker; set it to null if none is "
+    "compelling) — a name to research, not a buy order. Return STRICT JSON with "
+    "exactly this shape: "
     '{"calls": [{"sector": <one of the given sectors>, "direction": '
     '"bullish"|"neutral"|"bearish", "conviction": "low"|"med"|"high", '
-    '"key_drivers": [<short strings>], "rationale": <one or two sentences>}], '
+    '"key_drivers": [<short strings>], "rationale": <one or two sentences>, '
+    '"top_pick": {"ticker": <exact ticker from that sector\'s candidates>, '
+    '"note": <one phrase why this name>} | null}], '
     '"market_note": <one sentence overall context>}. '
     "Base conviction on how much the evidence actually supports the call — default "
     "to neutral/low when the inputs are thin or conflicting."
@@ -147,6 +153,7 @@ def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
         "recent_performance": memory,
         "web_research": web,
         "technicals": technicals or {},
+        "stock_candidates": dict(config.SECTOR_STOCKS),
     }
 
 
@@ -188,8 +195,23 @@ def parse_calls(raw: dict, trade_date: str) -> list[dict]:
             "tradeable_etf": config.SECTOR_TRADEABLE_ETF.get(sector),
             "key_drivers": [str(d) for d in drivers][:6],
             "rationale": str(c.get("rationale") or "")[:600],
+            "top_pick": _validate_pick(sector, c.get("top_pick")),
         }
     return [out[s] for s in CHINA_SECTORS if s in out]
+
+
+def _validate_pick(sector: str, pick) -> dict | None:
+    """Keep the model's single-name pick only if its ticker is in the sector's
+    vetted candidate list (blocks hallucinated tickers); fill name/tradeable
+    authoritatively from config, keep only the model's short note."""
+    if not isinstance(pick, dict) or not pick.get("ticker"):
+        return None
+    by_ticker = {s["ticker"]: s for s in config.SECTOR_STOCKS.get(sector, [])}
+    cand = by_ticker.get(pick["ticker"])
+    if not cand:
+        return None
+    return {"ticker": cand["ticker"], "name": cand["name"],
+            "tradeable": cand["tradeable"], "note": str(pick.get("note") or "")[:200]}
 
 
 # ── provider backends ────────────────────────────────────────────────────
@@ -436,6 +458,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
                 "tradeable_etf": c["tradeable_etf"],
                 "key_drivers": json.dumps(c["key_drivers"]),
                 "rationale": c["rationale"],
+                "top_pick": json.dumps(c["top_pick"]) if c.get("top_pick") else None,
                 "created_at": created_at,
             })
         # Meter every LLM pass (best-effort).

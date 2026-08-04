@@ -61,18 +61,22 @@ _RISK_SYSTEM = (
     "is strong or the evidence is thin, and flip a call only when clearly "
     "warranted. Then emit the FINAL calls. Output is a probabilistic lean for a "
     "human to weigh — NOT investment advice, NOT a guarantee, NEVER a buy/sell "
-    "instruction. Return STRICT JSON with EXACTLY this shape: "
+    "instruction. For each sector also name the single best candidate to WATCH "
+    "from that sector's `stock_candidates` (exact ticker; null if none compelling) "
+    "— a name to research, not a buy order. Return STRICT JSON with EXACTLY this "
+    "shape: "
     '{"calls": [{"sector": <one of the sectors>, "direction": '
     '"bullish"|"neutral"|"bearish", "conviction": "low"|"med"|"high", '
     '"key_drivers": [<short strings>], "rationale": <one sentence including the '
-    'main risk>}], "market_note": <one sentence overall context>}. '
+    'main risk>, "top_pick": {"ticker": <exact ticker from candidates>, "note": '
+    '<one phrase>} | null}], "market_note": <one sentence overall context>}. '
     "Default to neutral/low conviction when inputs are thin or conflicting."
 )
 
 
 def _data_payload(ctx: dict) -> str:
     keep = ("us_closes", "news", "macro_events", "technicals", "web_research",
-            "recent_performance")
+            "recent_performance", "stock_candidates")
     return json.dumps({k: ctx.get(k) for k in keep}, ensure_ascii=False)
 
 

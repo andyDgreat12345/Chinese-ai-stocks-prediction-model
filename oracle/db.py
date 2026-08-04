@@ -16,12 +16,22 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _add_column_if_missing(conn, table: str, col: str, decl: str) -> None:
+    """Idempotent column migration for state DBs that predate a new column
+    (CREATE TABLE IF NOT EXISTS never alters an existing table)."""
+    have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if col not in have:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
 def init_db(db_path: Path | str | None = None) -> None:
-    """Create all tables from schema.sql (idempotent)."""
+    """Create all tables from schema.sql (idempotent) + apply column migrations."""
     schema = (Path(__file__).resolve().parent / "schema.sql").read_text()
     conn = connect(db_path)
     try:
         conn.executescript(schema)
+        # Migrations for restored older state DBs:
+        _add_column_if_missing(conn, "llm_calls", "top_pick", "TEXT")  # JSON single-name pick
         conn.commit()
     finally:
         conn.close()
@@ -290,18 +300,20 @@ def upsert_llm_call(row: dict, db_path=None) -> None:
     the rule-based `predictions` so its edge can be measured independently."""
     conn = connect(db_path)
     try:
+        row = {"top_pick": None, **row}   # tolerate callers that omit top_pick
         conn.execute(
             """INSERT INTO llm_calls
                    (trade_date, sector, provider, model, direction, conviction,
-                    tradeable_etf, key_drivers, rationale, created_at)
+                    tradeable_etf, key_drivers, rationale, top_pick, created_at)
                VALUES
                    (:trade_date, :sector, :provider, :model, :direction, :conviction,
-                    :tradeable_etf, :key_drivers, :rationale, :created_at)
+                    :tradeable_etf, :key_drivers, :rationale, :top_pick, :created_at)
                ON CONFLICT(trade_date, sector) DO UPDATE SET
                     provider=excluded.provider, model=excluded.model,
                     direction=excluded.direction, conviction=excluded.conviction,
                     tradeable_etf=excluded.tradeable_etf,
                     key_drivers=excluded.key_drivers, rationale=excluded.rationale,
+                    top_pick=excluded.top_pick,
                     created_at=excluded.created_at""",
             row,
         )

@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     tradeable_etf TEXT,                   -- foreign-accessible proxy (ASHR/KWEB/...)
     key_drivers   TEXT,                   -- JSON array of strings
     rationale     TEXT,
+    top_pick      TEXT,                   -- JSON {ticker,name,tradeable,note}: single name to watch
     created_at    TEXT NOT NULL,
     UNIQUE (trade_date, sector)
 );
