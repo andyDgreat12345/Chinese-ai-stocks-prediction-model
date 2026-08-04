@@ -51,6 +51,14 @@ jobs:
       ORACLE_ANALYST_MODEL: ${{ vars.ORACLE_ANALYST_MODEL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      # Optional live web search that augments the AI analyst (spec §4.2). DeepSeek's
+      # API has no web search, so we run it ourselves and feed results into the
+      # prompt. Off unless set: repo variable ORACLE_SEARCH_PROVIDER (tavily|brave)
+      # + the matching key secret. Optional per-query price for the meter.
+      ORACLE_SEARCH_PROVIDER: ${{ vars.ORACLE_SEARCH_PROVIDER }}
+      ORACLE_SEARCH_PRICE_PER_QUERY: ${{ vars.ORACLE_SEARCH_PRICE_PER_QUERY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
