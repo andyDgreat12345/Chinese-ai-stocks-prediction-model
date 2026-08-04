@@ -1,0 +1,77 @@
+name: Weekly digest
+
+# Emails a weekly backtest digest — how the model, the naive baselines, and the
+# optional AI analyst ("llm (recorded)") are tracking — straight to your inbox,
+# so you don't have to check the dashboard.
+#
+# One-time setup (repo → Settings → Secrets and variables → Actions → Secrets):
+#   MAIL_USERNAME = your Gmail address (the sending account)
+#   MAIL_PASSWORD = a Gmail *app password* (not your normal password —
+#                   myaccount.google.com/apppasswords, requires 2-Step Verification)
+# The recipient is fixed below. The backtest runs against the state the daily
+# Oracle jobs persist on the `oracle-state` branch; it degrades gracefully to a
+# "no data yet" digest before those runs have accumulated anything.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC
+  workflow_dispatch: {}    # run on demand to test
+
+permissions:
+  contents: read           # to fetch the persisted oracle-state branch
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    env:
+      MAIL_TO: tianyisun2009@gmail.com
+      ORACLE_DB: ${{ github.workspace }}/_state/oracle.db
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore persisted state
+        run: |
+          mkdir -p _state
+          if git ls-remote --exit-code --heads origin oracle-state >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin oracle-state
+            git archive FETCH_HEAD | tar -x -C _state
+            echo "restored state from oracle-state branch"
+          else
+            echo "no oracle-state branch yet — the digest will report 'no data yet'"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the digest (backtest is stdlib-only — no pip install needed)
+        run: |
+          {
+            echo "China Market Oracle — weekly digest ($(date -u +%F))"
+            echo
+            python -m oracle.backtest || echo "(backtest could not run this week)"
+            echo
+            echo "Reading it: a strategy earns trust only if it beats the baselines on"
+            echo "bet-accuracy AND net Sharpe with a small p-value. The AI analyst row"
+            echo "('llm (recorded)') is scored only on the days it actually called — a"
+            echo "small bet count means the p-value is not meaningful yet. If there is no"
+            echo "AI row, the DeepSeek analyst is not enabled (set repo variable"
+            echo "ORACLE_ANALYST_PROVIDER=deepseek + secret DEEPSEEK_API_KEY)."
+            echo
+            echo "Not investment advice — a probabilistic signal to weigh yourself."
+          } > digest.txt
+          cat digest.txt
+
+      - name: Email the digest
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "China Market Oracle — weekly digest"
+          to: ${{ env.MAIL_TO }}
+          from: China Market Oracle <${{ secrets.MAIL_USERNAME }}>
+          body: file://digest.txt
