@@ -57,7 +57,11 @@ _SYSTEM = (
     "context and other analysts' views. Your job is to "
     "produce a next-session directional call for each listed China sector. Ground "
     "each call in the SPECIFIC technicals (cite the RSI/MACD/trend/momentum) and the "
-    "relevant US move or news — be concrete and technical, not vague. Reason "
+    "relevant US move or news — be concrete and technical, not vague. Use the "
+    "per-sector `us_link` label (measured): for a sector that FOLLOWS the US, weight "
+    "the overnight US move heavily; for one that DIVERGES or is independent, do NOT "
+    "assume it tracks Wall Street — lean on its own technicals, domestic news, and "
+    "catalysts instead. Reason "
     "ONLY from the data provided (including the technicals and web-search snippets) "
     "plus general market mechanics — do NOT invent "
     "specific prices, figures, tickers, or events that were not given. Prefer recent "
@@ -111,7 +115,8 @@ _VALID_CONV = {"low", "med", "high"}
 def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
                   macro_events: list[dict], reflections: list[dict],
                   web_research: list[dict] | None = None,
-                  technicals: dict | None = None) -> dict:
+                  technicals: dict | None = None,
+                  us_link: dict | None = None) -> dict:
     """Assemble the deterministic context handed to the model. Pure.
 
     ``web_research`` is the optional live-search layer: a list of
@@ -153,6 +158,7 @@ def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
         "recent_performance": memory,
         "web_research": web,
         "technicals": technicals or {},
+        "us_link": us_link or {},
         "stock_candidates": dict(config.SECTOR_STOCKS),
     }
 
@@ -380,7 +386,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
     (thesis → sector deep-dive → risk) when ORACLE_ANALYST_MODE=chain. Records the
     calls in `llm_calls` and meters every LLM pass. Returns the number of calls
     written; no-ops (returns 0) when the analyst is not configured. Never raises."""
-    from . import analyst_chain, technicals as ta, websearch
+    from . import analyst_chain, divergence as dv, technicals as ta, websearch
 
     now = datetime.now(timezone.utc)
     trade_date = trade_date or now.date().isoformat()
@@ -421,6 +427,12 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
             if len(series) >= 2:
                 techs[sector] = ta.compute_indicators(series)
 
+        # Measured US-follows-vs-diverges label per sector (fail-soft).
+        try:
+            us_link = dv.classify_sectors(end=trade_date)
+        except Exception:  # noqa: BLE001
+            us_link = {}
+
         ctx = build_context(
             trade_date,
             db.get_rows_for_date("us_close", trade_date),
@@ -429,6 +441,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
             db.recent_reflections(5),
             web_research=web,
             technicals=techs,
+            us_link=us_link,
         )
 
         # Produce the parsed calls, plus a list of per-call usages to meter.

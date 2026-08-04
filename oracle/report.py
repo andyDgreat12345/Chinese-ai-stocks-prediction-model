@@ -143,18 +143,22 @@ def _us_summary(us_rows: list[dict]) -> str:
 
 def build_report(trade_date: str, predictions: list[dict], llm_calls: list[dict],
                  us_rows: list[dict] | None = None,
-                 technicals: dict | None = None) -> dict:
+                 technicals: dict | None = None, divergence: dict | None = None) -> dict:
     """Assemble the full daily outlook from the day's rule-based predictions and
-    AI-analyst calls, plus the per-sector technical snapshot. Pure."""
+    AI-analyst calls, plus the per-sector technical snapshot and US-link label. Pure."""
+    from .analysis.divergence import summary_line
+
     preds = {p["sector"]: p for p in predictions}
     calls = {c["sector"]: c for c in llm_calls}
     techs = technicals or {}
+    divg = divergence or {}
     merged = []
     for sector in CHINA_SECTORS:
         m = merge_sector(sector, preds.get(sector), calls.get(sector))
         if m:
             t = techs.get(sector) or {}
             m["tech"] = t.get("technical_note")
+            m["us_link"] = summary_line(divg[sector]) if sector in divg else None
             merged.append(m)
 
     def _sorted(items):
@@ -189,6 +193,8 @@ def _line(m: dict) -> list[str]:
         out.append(f"  - name to watch: {p.get('name', p['ticker'])} ({p['ticker']}{trad}){note}")
     if m.get("tech"):
         out.append(f"  - technicals: {m['tech']}")
+    if m.get("us_link"):
+        out.append(f"  - US link: {m['us_link']}")
     if m["drivers"]:
         out.append(f"  - drivers: {', '.join(m['drivers'])}")
     if m["rationale"]:
@@ -283,7 +289,13 @@ def run_report(trade_date: str | None = None, db_path=None) -> dict:
                   if r["close"] is not None]
         if len(series) >= 2:
             techs[sector] = ta.compute_indicators(series)
-    return build_report(trade_date, preds, calls, us_rows, technicals=techs)
+    # US-follows-vs-diverges label per sector (measured over history).
+    from .analysis.divergence import classify_sectors
+    try:
+        divg = classify_sectors(end=trade_date, db_path=db_path)
+    except Exception:
+        divg = {}
+    return build_report(trade_date, preds, calls, us_rows, technicals=techs, divergence=divg)
 
 
 def main(argv: list[str]) -> int:
