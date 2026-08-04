@@ -71,7 +71,8 @@ _RISK_SYSTEM = (
 
 
 def _data_payload(ctx: dict) -> str:
-    keep = ("us_closes", "news", "macro_events", "web_research", "recent_performance")
+    keep = ("us_closes", "news", "macro_events", "technicals", "web_research",
+            "recent_performance")
     return json.dumps({k: ctx.get(k) for k in keep}, ensure_ascii=False)
 
 

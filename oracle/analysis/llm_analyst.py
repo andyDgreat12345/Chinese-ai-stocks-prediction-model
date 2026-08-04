@@ -51,12 +51,15 @@ _SYSTEM = (
     "You are the research desk of a China-equity prediction system. You are given "
     "one trading day's inputs: US market closes by sector, overnight world-news "
     "headlines (with a category and a sentiment score), any scheduled macro events, "
-    "a short memory of how the system's recent predictions fared, and (when "
-    "available) fresh WEB SEARCH results giving current context and other analysts' "
-    "views. Your job is to "
-    "produce a next-session directional call for each listed China sector. Reason "
-    "ONLY from the data provided (including the web-search snippets) plus general "
-    "market mechanics — do NOT invent "
+    "per-sector TECHNICAL INDICATORS (trend, RSI, MACD, momentum) computed on each "
+    "China sector's own price history, a short memory of how the system's recent "
+    "predictions fared, and (when available) fresh WEB SEARCH results giving current "
+    "context and other analysts' views. Your job is to "
+    "produce a next-session directional call for each listed China sector. Ground "
+    "each call in the SPECIFIC technicals (cite the RSI/MACD/trend/momentum) and the "
+    "relevant US move or news — be concrete and technical, not vague. Reason "
+    "ONLY from the data provided (including the technicals and web-search snippets) "
+    "plus general market mechanics — do NOT invent "
     "specific prices, figures, tickers, or events that were not given. Prefer recent "
     "web results over stale ones and do not over-weight a single headline. Output is a "
     "probabilistic lean for a human to weigh, NOT investment advice, NOT a guarantee, "
@@ -101,11 +104,14 @@ _VALID_CONV = {"low", "med", "high"}
 # ── pure context assembly + prompt (unit-tested) ─────────────────────────
 def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
                   macro_events: list[dict], reflections: list[dict],
-                  web_research: list[dict] | None = None) -> dict:
+                  web_research: list[dict] | None = None,
+                  technicals: dict | None = None) -> dict:
     """Assemble the deterministic context handed to the model. Pure.
 
     ``web_research`` is the optional live-search layer: a list of
-    {title, url, snippet, published}. Empty/omitted when search is disabled."""
+    {title, url, snippet, published}. Empty/omitted when search is disabled.
+    ``technicals`` is the per-sector indicator snapshot (trend/RSI/MACD/momentum)
+    from the sector's own price history — the hard technical state to reason over."""
     us = [
         {"symbol": r.get("symbol"), "sector": r.get("sector"), "pct_change": r.get("pct_change")}
         for r in us_rows if r.get("pct_change") is not None
@@ -140,6 +146,7 @@ def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
         "macro_events": macro,
         "recent_performance": memory,
         "web_research": web,
+        "technicals": technicals or {},
     }
 
 
@@ -351,7 +358,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
     (thesis → sector deep-dive → risk) when ORACLE_ANALYST_MODE=chain. Records the
     calls in `llm_calls` and meters every LLM pass. Returns the number of calls
     written; no-ops (returns 0) when the analyst is not configured. Never raises."""
-    from . import analyst_chain, websearch
+    from . import analyst_chain, technicals as ta, websearch
 
     now = datetime.now(timezone.utc)
     trade_date = trade_date or now.date().isoformat()
@@ -379,6 +386,19 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
             print(f"run_llm_analysis: web search ({search_provider}) ran "
                   f"{n_queries} queries → {len(web)} results")
 
+        # Per-sector technical indicators from each sector ETF's own price history
+        # (filter by the canonical symbol so scales don't mix).
+        techs = {}
+        for sector in CHINA_SECTORS:
+            symbol = config.CHINA_SECTOR_ETFS.get(sector)
+            if not symbol:
+                continue
+            series = [r["close"] for r in
+                      db.close_series("china_close", symbol=symbol, limit=120, end=trade_date)
+                      if r["close"] is not None]
+            if len(series) >= 2:
+                techs[sector] = ta.compute_indicators(series)
+
         ctx = build_context(
             trade_date,
             db.get_rows_for_date("us_close", trade_date),
@@ -386,6 +406,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
             db.macro_event_dates(trade_date),
             db.recent_reflections(5),
             web_research=web,
+            technicals=techs,
         )
 
         # Produce the parsed calls, plus a list of per-call usages to meter.
