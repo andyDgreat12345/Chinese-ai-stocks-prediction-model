@@ -169,6 +169,31 @@ drivers, and the foreign-tradeable ETF (ASHR/KWEB/…) each call maps to.
   *API* has no live web search — the analyst reasons over the ingested RSS news;
   a live-search feed is a clean future add-on.)
 
+## The daily action report (`oracle/report.py`)
+
+Right after the US 4 pm close, the morning job produces a single plain-language
+**outlook for the coming China session** and posts it as a GitHub Issue that
+`@`-mentions you — so GitHub emails it straight to your inbox (the same
+zero-credential path as the weekly digest; no SMTP secret). It merges the two
+engines into one read per sector:
+
+- **✅ Leaning constructive** — candidates to research / consider (the read points up),
+- **⛔ Leaning cautious** — reasons to hold off / avoid adding (the read points down),
+- **👀 Mixed or flat** — the rule-based model and the AI analyst disagree (no edge).
+
+Conviction is highest where both engines *independently agree*; a split demotes
+the sector to "watch" instead of feigning an edge. Each line names the
+foreign-tradeable proxy (ASHR / KWEB / FXI) and the key drivers behind the call.
+Generate it by hand any time:
+
+```bash
+python -m oracle.report            # today's outlook (plain text)
+python -m oracle.report --md       # markdown (what the issue/email contains)
+```
+
+It's a probabilistic lean to weigh and size to your own risk — **not** a
+buy/sell instruction, not a guarantee, never auto-executed.
+
 ## The reflection loop (§4b — top priority)
 
 Runs at 15:15 CST once the actual China close is in (`reflect_and_update`), as
