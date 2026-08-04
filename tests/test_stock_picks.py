@@ -29,6 +29,19 @@ def test_parse_drops_hallucinated_or_wrong_sector_ticker():
     assert calls["energy"]["top_pick"] is None
 
 
+def test_parse_matches_lenient_ticker_and_name_forms():
+    # HK line for SMIC (config primary is 688981.SS, tradeable HK:0981)
+    by_hk = la.parse_calls({"calls": [{"sector": "semis", "direction": "bullish",
+        "conviction": "med", "key_drivers": [], "rationale": "r",
+        "top_pick": {"ticker": "0981.HK"}}]}, "2026-08-04")[0]
+    assert by_hk["top_pick"]["name"] == "SMIC"
+    # by company name only
+    by_name = la.parse_calls({"calls": [{"sector": "growth", "direction": "bullish",
+        "conviction": "med", "key_drivers": [], "rationale": "r",
+        "top_pick": {"ticker": "", "name": "Alibaba"}}]}, "2026-08-04")[0]
+    assert by_name["top_pick"]["ticker"] == "BABA"
+
+
 def test_parse_null_pick_is_none():
     raw = {"calls": [{"sector": "broad", "direction": "neutral", "conviction": "low",
                       "key_drivers": [], "rationale": "r", "top_pick": None}]}
