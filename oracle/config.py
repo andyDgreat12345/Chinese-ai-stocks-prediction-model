@@ -73,6 +73,42 @@ SECTOR_TRADEABLE_ETF = {
     "financials": "FXI",    # large-cap, financials-heavy
 }
 
+# Curated single-name watchlist per sector — liquid, recognizable China names the
+# analyst may pick from as "the specific name to watch" for a sector call. Each:
+# {ticker (primary listing), name, tradeable (the foreign-accessible form — US ADR
+# or HK line — or "" if mainland-only)}. This is a *research watchlist*, NOT a
+# buy list; the disclaimer applies to every pick. Kept short and liquid on purpose.
+SECTOR_STOCKS = {
+    "broad": [
+        {"ticker": "600519.SS", "name": "Kweichow Moutai", "tradeable": ""},
+        {"ticker": "601318.SS", "name": "Ping An Insurance", "tradeable": "HK:2318"},
+        {"ticker": "600036.SS", "name": "China Merchants Bank", "tradeable": "HK:3968"},
+    ],
+    "growth": [
+        {"ticker": "BABA", "name": "Alibaba", "tradeable": "BABA"},
+        {"ticker": "PDD", "name": "PDD Holdings", "tradeable": "PDD"},
+        {"ticker": "JD", "name": "JD.com", "tradeable": "JD"},
+        {"ticker": "0700.HK", "name": "Tencent", "tradeable": "HK:0700"},
+        {"ticker": "BIDU", "name": "Baidu", "tradeable": "BIDU"},
+    ],
+    "semis": [
+        {"ticker": "688981.SS", "name": "SMIC", "tradeable": "HK:0981"},
+        {"ticker": "688256.SS", "name": "Cambricon", "tradeable": ""},
+        {"ticker": "002371.SZ", "name": "NAURA Technology", "tradeable": ""},
+        {"ticker": "1347.HK", "name": "Hua Hong Semiconductor", "tradeable": "HK:1347"},
+    ],
+    "energy": [
+        {"ticker": "601857.SS", "name": "PetroChina", "tradeable": "HK:0857"},
+        {"ticker": "600028.SS", "name": "Sinopec", "tradeable": "HK:0386"},
+        {"ticker": "0883.HK", "name": "CNOOC", "tradeable": "HK:0883"},
+    ],
+    "financials": [
+        {"ticker": "601398.SS", "name": "ICBC", "tradeable": "HK:1398"},
+        {"ticker": "601288.SS", "name": "Agricultural Bank of China", "tradeable": "HK:1288"},
+        {"ticker": "601318.SS", "name": "Ping An Insurance", "tradeable": "HK:2318"},
+    ],
+}
+
 NEWS_FEEDS = {
     "reuters": "https://feeds.reuters.com/reuters/businessNews",
     "caixin": "https://www.caixinglobal.com/rss/economics.xml",

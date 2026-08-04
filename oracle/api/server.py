@@ -104,6 +104,7 @@ def llm_calls() -> dict:
                 "tradeable_etf": r["tradeable_etf"],
                 "key_drivers": _json.loads(r["key_drivers"] or "[]"),
                 "rationale": r["rationale"],
+                "top_pick": _json.loads(r["top_pick"]) if r["top_pick"] else None,
             }
             for r in rows
         ],
