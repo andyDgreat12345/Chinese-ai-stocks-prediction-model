@@ -244,6 +244,25 @@ python -m oracle.report --md       # markdown (what the issue/email contains)
 It's a probabilistic lean to weigh and size to your own risk — **not** a
 buy/sell instruction, not a guarantee, never auto-executed.
 
+## Deeper, market-specific prediction
+
+Three layers make the analysis specific and technical instead of broad:
+
+- **Technical indicators** (`analysis/technicals.py`) — trend, Wilder RSI, MACD, and
+  momentum computed on each sector ETF's own price history and fed to the analyst,
+  so calls are grounded in the actual technical state ("KWEB oversold, RSI 27").
+- **Single-name picks** (`config.SECTOR_STOCKS`) — the analyst names one specific
+  stock to *watch* per sector from a vetted, liquid universe (with its US-ADR/HK
+  tradeable form), validated against the list so it can't invent a ticker. A
+  research watchlist, not a buy list.
+- **US-follows-vs-diverges** (`analysis/divergence.py`) — the self-improvement loop
+  measures, per sector, whether it actually tracks the US overnight (correlation of
+  the US-spillover signal vs. the realized China move over all history) and labels
+  it *follows US* / *diverges* / *weak-independent*, gated by
+  `MIN_CORRELATION_SAMPLE`. The analyst is told to weight the US move heavily for a
+  follower and to lean on domestic technicals/news for a diverger (e.g. AI-type
+  themes that move on their own catalysts). Surfaced per sector in the daily report.
+
 ## The reflection loop (§4b — top priority)
 
 Runs at 15:15 CST once the actual China close is in (`reflect_and_update`), as
