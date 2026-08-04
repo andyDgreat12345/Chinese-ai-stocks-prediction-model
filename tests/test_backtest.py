@@ -106,6 +106,20 @@ def test_llm_strategy_scored_only_on_recorded_calls(monkeypatch):
     assert "llm (recorded)" in text
 
 
+def test_backtest_survives_db_missing_llm_calls_table(monkeypatch):
+    # Reproduces the digest failure: a restored older state DB that predates the
+    # llm_calls table. run_backtest must self-heal the schema, not crash.
+    tmp = tempfile.mktemp(suffix=".db")
+    monkeypatch.setattr(config, "DB_PATH", tmp)
+    _seed_days(tmp)
+    conn = db.connect(tmp)
+    conn.execute("DROP TABLE llm_calls")   # simulate the old schema
+    conn.commit()
+    conn.close()
+    report = bt.run_backtest(db_path=tmp)   # would raise "no such table" before the fix
+    assert report["n_records"] == 3
+
+
 def test_no_llm_strategy_without_calls(monkeypatch):
     tmp = tempfile.mktemp(suffix=".db")
     monkeypatch.setattr(config, "DB_PATH", tmp)

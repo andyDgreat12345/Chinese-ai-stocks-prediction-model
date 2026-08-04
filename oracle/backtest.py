@@ -210,6 +210,10 @@ def calibration(records: list[dict]) -> dict:
 
 
 def run_backtest(start=None, end=None, db_path=None) -> dict:
+    # Ensure every table exists before querying — a restored older state DB may
+    # predate a newer table (e.g. llm_calls). init_db is idempotent
+    # (CREATE TABLE IF NOT EXISTS) and never touches existing rows.
+    db.init_db(db_path)
     records = collect_records(start, end, db_path)
     dates = sorted({r["date"] for r in records})
     # The recorded AI analyst is scored as a strategy only when calls exist.
