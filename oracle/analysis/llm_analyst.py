@@ -186,30 +186,46 @@ def parse_calls(raw: dict, trade_date: str) -> list[dict]:
 
 
 # ── provider backends ────────────────────────────────────────────────────
-def _deepseek_analyze(ctx: dict) -> dict:
-    """DeepSeek via its OpenAI-compatible endpoint (stdlib only)."""
+def _extract_json(text: str) -> dict:
+    """Parse a JSON object from model output, tolerating stray prose around it
+    (the reasoner model can't be forced into strict JSON mode)."""
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        i, j = text.find("{"), text.rfind("}")
+        if i >= 0 and j > i:
+            return json.loads(text[i:j + 1])
+        raise
+
+
+def _deepseek_complete(system: str, user: str, model: str) -> tuple[dict, dict]:
+    """One DeepSeek chat completion → (parsed_json, usage). Generic (any system +
+    user), so both the single-pass analyst and the multi-pass chain use it. The
+    `deepseek-reasoner` model rejects response_format/temperature, so those are
+    dropped for it and the JSON is recovered leniently from the answer."""
     import urllib.request
 
     key = os.environ["DEEPSEEK_API_KEY"]
-    model = os.environ.get("ORACLE_ANALYST_MODEL") or "deepseek-chat"
-    body = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _prompt(ctx)},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.4,
-    }).encode()
+    is_reasoner = "reasoner" in model
+    msg = {"model": model, "messages": [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user}]}
+    if not is_reasoner:
+        msg["response_format"] = {"type": "json_object"}
+        msg["temperature"] = 0.4
     req = urllib.request.Request(
-        "https://api.deepseek.com/chat/completions",
-        data=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=90) as r:  # noqa: S310 — fixed host
+        "https://api.deepseek.com/chat/completions", data=json.dumps(msg).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 — fixed host
         payload = json.loads(r.read())
-    parsed = json.loads(payload["choices"][0]["message"]["content"])
-    return parsed, _usage_from_openai(payload.get("usage"))
+    content = payload["choices"][0]["message"]["content"]
+    return _extract_json(content), _usage_from_openai(payload.get("usage"))
+
+
+def _deepseek_analyze(ctx: dict) -> tuple[dict, dict]:
+    """Single-pass DeepSeek analyst (the default mode)."""
+    model = os.environ.get("ORACLE_ANALYST_MODEL") or "deepseek-chat"
+    return _deepseek_complete(_SYSTEM, _prompt(ctx), model)
 
 
 def _usage_from_openai(u: dict | None) -> dict:
@@ -249,6 +265,25 @@ def _claude_analyze(ctx: dict) -> dict:
     return json.loads(text), usage
 
 
+def _claude_complete(system: str, user: str, model: str) -> tuple[dict, dict]:
+    """Generic Claude completion → (parsed_json, usage), for the multi-pass chain
+    (JSON asked for in-prompt and extracted, since each pass has its own shape)."""
+    import anthropic
+
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=model, max_tokens=4096, system=system,
+        messages=[{"role": "user", "content": user}])
+    if resp.stop_reason == "refusal":
+        raise RuntimeError("claude refused the analysis request")
+    text = next(b.text for b in resp.content if b.type == "text")
+    u = resp.usage
+    usage = {"prompt_tokens": u.input_tokens, "completion_tokens": u.output_tokens,
+             "cached_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+             "total_tokens": u.input_tokens + u.output_tokens}
+    return _extract_json(text), usage
+
+
 def get_analyst_llm() -> tuple[Callable[[dict], dict], str, str] | None:
     """Return (analyze_fn, provider, model) per env config, or None when the
     analyst is not configured (in which case the job no-ops and the rule-based
@@ -267,25 +302,75 @@ def get_analyst_llm() -> tuple[Callable[[dict], dict], str, str] | None:
     return None
 
 
+def get_completer() -> tuple[Callable[[str, str, str], tuple[dict, dict]], str, str] | None:
+    """Return (complete_fn, provider, work_model) for the multi-pass chain, or None
+    when unconfigured. complete_fn(system, user, model) → (parsed_json, usage)."""
+    provider = (os.environ.get("ORACLE_ANALYST_PROVIDER") or "").strip().lower()
+    if provider == "deepseek" and os.environ.get("DEEPSEEK_API_KEY"):
+        return (_deepseek_complete, "deepseek",
+                os.environ.get("ORACLE_ANALYST_MODEL") or "deepseek-chat")
+    if provider == "claude" and os.environ.get("ANTHROPIC_API_KEY"):
+        return (_claude_complete, "claude",
+                os.environ.get("ORACLE_ANALYST_MODEL") or "claude-opus-5")
+    return None
+
+
+def chain_enabled() -> bool:
+    return (os.environ.get("ORACLE_ANALYST_MODE") or "single").strip().lower() == "chain"
+
+
 # ── job entrypoint ───────────────────────────────────────────────────────
-def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None) -> int:
+def _meter(trade_date, created_at, call_type, provider, model, usage) -> None:
+    """Record one call's tokens + estimated cost in the spend meter (best-effort;
+    metering must never lose the calls we already persisted)."""
+    if not usage:
+        return
+    try:
+        from .pricing import cost_usd
+        cost = cost_usd(model, usage["prompt_tokens"], usage["completion_tokens"],
+                        usage.get("cached_tokens", 0))
+        db.record_llm_usage({
+            "trade_date": trade_date, "call_type": call_type,
+            "provider": provider, "model": model,
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "cached_tokens": usage.get("cached_tokens", 0),
+            "total_tokens": usage["total_tokens"],
+            "cost_usd": cost, "created_at": created_at})
+        print(f"run_llm_analysis: {call_type} {usage['total_tokens']} tokens "
+              f"(~${cost:.4f}) recorded")
+    except Exception as e:  # noqa: BLE001
+        print(f"run_llm_analysis: {call_type} metering skipped ({e!r})")
+
+
+def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
+                     complete=None) -> int:
     """Optional AI-analyst pass. Reads the day's data + reflection memory, runs an
-    optional live web search for fresh context, asks the LLM for per-sector calls,
-    and records them in `llm_calls` (separate from the rule-based predictions).
-    Returns the number of calls written. No-ops (returns 0) when the analyst is not
-    configured. Never raises."""
-    from . import websearch
+    optional live web search for fresh context, then asks the LLM for per-sector
+    calls — either a single pass (default) or the multi-pass reasoning chain
+    (thesis → sector deep-dive → risk) when ORACLE_ANALYST_MODE=chain. Records the
+    calls in `llm_calls` and meters every LLM pass. Returns the number of calls
+    written; no-ops (returns 0) when the analyst is not configured. Never raises."""
+    from . import analyst_chain, websearch
 
     now = datetime.now(timezone.utc)
     trade_date = trade_date or now.date().isoformat()
     created_at = now.isoformat()
 
-    resolved = get_analyst_llm() if llm is None else (llm, "test", "test")
+    # Chain mode when ORACLE_ANALYST_MODE=chain (or a completer is injected for
+    # tests); single-pass otherwise.
+    use_chain = complete is not None or (chain_enabled() and llm is None)
+    if use_chain:
+        resolved = (complete, "test", "test") if complete is not None else get_completer()
+        mode = "chain"
+    else:
+        resolved = get_analyst_llm() if llm is None else (llm, "test", "test")
+        mode = "single"
     if resolved is None:
         print("run_llm_analysis: analyst not configured "
               "(set ORACLE_ANALYST_PROVIDER=deepseek|claude + its API key) — skipping")
         return 0
-    analyze_fn, provider, model = resolved
+    engine_fn, provider, model = resolved
 
     try:
         # Optional live web search (fail-soft: empty results if disabled/erroring).
@@ -302,10 +387,22 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None) -
             db.recent_reflections(5),
             web_research=web,
         )
-        # Backends return (parsed, usage); a test stub may return just the parsed
-        # dict — treat that as "no usage reported".
-        result = analyze_fn(ctx)
-        parsed, usage = result if isinstance(result, tuple) else (result, None)
+
+        # Produce the parsed calls, plus a list of per-call usages to meter.
+        pass_usages: list[dict] = []
+        if mode == "chain":
+            thesis_model = os.environ.get("ORACLE_ANALYST_THESIS_MODEL") or model
+            parsed, usages = analyst_chain.run_chain(ctx, engine_fn, model, thesis_model)
+            print(f"run_llm_analysis: multi-pass chain ran {len(usages)} passes")
+            pass_usages = [{"call_type": f"analyst-{u['pass']}", "model": u["model"],
+                            "usage": u["usage"]} for u in usages]
+        else:
+            # Backends return (parsed, usage); a test stub may return just the parsed
+            # dict — treat that as "no usage reported".
+            result = engine_fn(ctx)
+            parsed, usage = result if isinstance(result, tuple) else (result, None)
+            pass_usages = [{"call_type": "analyst", "model": model, "usage": usage}]
+
         calls = parse_calls(parsed, trade_date)
         for c in calls:
             db.upsert_llm_call({
@@ -320,25 +417,9 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None) -
                 "rationale": c["rationale"],
                 "created_at": created_at,
             })
-        # Meter the spend (best-effort — a missing/odd usage block must not lose
-        # the calls we already persisted).
-        if usage:
-            try:
-                from .pricing import cost_usd
-                cost = cost_usd(model, usage["prompt_tokens"],
-                                usage["completion_tokens"], usage.get("cached_tokens", 0))
-                db.record_llm_usage({
-                    "trade_date": trade_date, "call_type": "analyst",
-                    "provider": provider, "model": model,
-                    "prompt_tokens": usage["prompt_tokens"],
-                    "completion_tokens": usage["completion_tokens"],
-                    "cached_tokens": usage.get("cached_tokens", 0),
-                    "total_tokens": usage["total_tokens"],
-                    "cost_usd": cost, "created_at": created_at})
-                print(f"run_llm_analysis: usage {usage['total_tokens']} tokens "
-                      f"(~${cost:.4f}) recorded")
-            except Exception as e:  # noqa: BLE001
-                print(f"run_llm_analysis: usage metering skipped ({e!r})")
+        # Meter every LLM pass (best-effort).
+        for pu in pass_usages:
+            _meter(trade_date, created_at, pu["call_type"], provider, pu["model"], pu["usage"])
 
         # Meter the web search too (per-query cost from config; 0 on a free tier).
         if search_provider and n_queries:

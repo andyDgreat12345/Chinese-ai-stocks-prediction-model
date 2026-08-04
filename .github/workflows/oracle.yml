@@ -49,6 +49,12 @@ jobs:
       # Off by default → the rule-based prediction runs alone.
       ORACLE_ANALYST_PROVIDER: ${{ vars.ORACLE_ANALYST_PROVIDER }}
       ORACLE_ANALYST_MODEL: ${{ vars.ORACLE_ANALYST_MODEL }}
+      # Multi-pass reasoning chain (thesis → sector deep-dive → risk). Set repo
+      # variable ORACLE_ANALYST_MODE=chain to enable (~3× token cost, shown on the
+      # spend meter); leave unset for the single-pass analyst. ORACLE_ANALYST_THESIS_MODEL
+      # optionally runs pass 1 on a reasoning model, e.g. deepseek-reasoner.
+      ORACLE_ANALYST_MODE: ${{ vars.ORACLE_ANALYST_MODE }}
+      ORACLE_ANALYST_THESIS_MODEL: ${{ vars.ORACLE_ANALYST_THESIS_MODEL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       # Optional live web search that augments the AI analyst (spec §4.2). DeepSeek's
