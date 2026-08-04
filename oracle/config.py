@@ -89,6 +89,34 @@ CORRELATION_WINDOWS = [30, 60, 90]  # rolling windows (trading days)
 # NOT auto-applied, until this is flipped on (spec §4b-iii, human-in-the-loop).
 AUTO_APPLY_WEIGHT_ADJUSTMENTS = False
 
+# ── LLM token pricing (USD per 1,000,000 tokens) ─────────────────────────
+# Used ONLY to *estimate* spend for the usage meter (oracle/analysis/pricing.py);
+# the provider's invoice is the source of truth. VERIFY against current pricing —
+# these move. Override without a code change via env ORACLE_LLM_PRICES, a JSON
+# object merged over these defaults, e.g.:
+#   ORACLE_LLM_PRICES='{"deepseek-chat":{"input":0.27,"cache_hit":0.07,"output":1.10}}'
+# "input" = per-1M prompt tokens on a cache MISS; "cache_hit" = per-1M prompt
+# tokens served from the provider's context cache; "output" = per-1M completion.
+LLM_PRICES = {
+    "deepseek-chat":     {"input": 0.27, "cache_hit": 0.07, "output": 1.10},
+    "deepseek-reasoner": {"input": 0.55, "cache_hit": 0.14, "output": 2.19},
+    "claude-opus-5":     {"input": 5.0,  "cache_hit": 0.50, "output": 25.0},
+    "claude-sonnet-5":   {"input": 3.0,  "cache_hit": 0.30, "output": 15.0},
+    "claude-haiku-4-5-20251001": {"input": 1.0, "cache_hit": 0.10, "output": 5.0},
+}
+# Used when a model isn't in the table above — conservative-ish so an unknown
+# model still meters *something* rather than $0.
+LLM_PRICE_FALLBACK = {"input": 0.30, "cache_hit": 0.08, "output": 1.20}
+
+_env_prices = os.environ.get("ORACLE_LLM_PRICES")
+if _env_prices:
+    try:
+        import json as _json
+        for _model, _rate in (_json.loads(_env_prices) or {}).items():
+            LLM_PRICES[_model] = {**LLM_PRICES.get(_model, LLM_PRICE_FALLBACK), **_rate}
+    except (ValueError, TypeError, AttributeError):
+        pass  # bad override -> keep defaults, never crash config import
+
 DISCLAIMER = (
     "Not investment advice. Output is a probabilistic signal for you to weigh "
     "yourself — not a buy/sell instruction and not a guarantee of returns."

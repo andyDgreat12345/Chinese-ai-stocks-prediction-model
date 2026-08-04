@@ -64,6 +64,8 @@ jobs:
             echo
             echo '```'
             python -m oracle.backtest || echo "(backtest could not run this week)"
+            echo
+            python -m oracle.usage || echo "(usage meter unavailable)"
             echo '```'
             echo
             echo "**Reading it:** a strategy earns trust only if it beats the baselines on"

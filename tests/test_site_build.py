@@ -29,9 +29,9 @@ def test_site_build_writes_snapshots_and_relative_index(monkeypatch, tmp_path):
     out = build(tmp_path / "site")
 
     # JSON snapshots for every endpoint
-    for name in ("prediction", "report", "heatmap", "accuracy", "leaderboard",
-                 "weights", "reflections", "markets", "history", "news-impact",
-                 "health"):
+    for name in ("prediction", "report", "llm-usage", "heatmap", "accuracy",
+                 "leaderboard", "weights", "reflections", "markets", "history",
+                 "news-impact", "health"):
         assert (out / "api" / f"{name}.json").exists(), name
     pred = json.loads((out / "api" / "prediction.json").read_text())
     assert len(pred["predictions"]) == 5
