@@ -165,9 +165,38 @@ drivers, and the foreign-tradeable ETF (ASHR/KWEB/…) each call maps to.
   not a fact.
 - **Fail-soft + honest.** Any error or refusal leaves the rule-based prediction
   as the sole record. Output is a probabilistic signal with the standard
-  disclaimer — not a buy/sell instruction, never auto-executed. (Note: DeepSeek's
-  *API* has no live web search — the analyst reasons over the ingested RSS news;
-  a live-search feed is a clean future add-on.)
+  disclaimer — not a buy/sell instruction, never auto-executed.
+
+- **Live web search (optional).** DeepSeek's *API* has no web search (that's an
+  app-only feature), so the system runs the search itself and feeds fresh results
+  into the analyst's prompt — the standard search-augmented pattern. Off by
+  default; enable with a provider + key:
+
+  ```bash
+  export ORACLE_SEARCH_PROVIDER=tavily   # or brave
+  export TAVILY_API_KEY=tvly-...         # or BRAVE_API_KEY
+  ```
+
+  On GitHub Actions, set repo **variable** `ORACLE_SEARCH_PROVIDER` + the matching
+  key **secret**. Each run searches one market-wide query plus one per sector
+  (bounded by `ORACLE_SEARCH_MAX_QUERIES`), de-duplicates, and hands the snippets
+  to DeepSeek as extra provided context. The search is **metered** in the spend
+  tracker (`ORACLE_SEARCH_PRICE_PER_QUERY`, 0 on a free tier), so its cost shows up
+  next to token cost.
+
+### AI research spend meter (`oracle/usage.py`)
+
+Every AI call records its token counts (and, for search, its query count) plus an
+**estimated USD cost** in the `llm_usage` table, priced from `config.LLM_PRICES`
+(override via env `ORACLE_LLM_PRICES`). See it on the dashboard's *AI Research
+Spend* panel, in the weekly digest, or from the CLI:
+
+```bash
+python -m oracle.usage      # today / last 7d / all-time cost + tokens, per model
+```
+
+It's an **estimate** to keep deeper research honest — the provider invoice is the
+source of truth.
 
 ## The daily action report (`oracle/report.py`)
 

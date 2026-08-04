@@ -51,10 +51,14 @@ _SYSTEM = (
     "You are the research desk of a China-equity prediction system. You are given "
     "one trading day's inputs: US market closes by sector, overnight world-news "
     "headlines (with a category and a sentiment score), any scheduled macro events, "
-    "and a short memory of how the system's recent predictions fared. Your job is to "
+    "a short memory of how the system's recent predictions fared, and (when "
+    "available) fresh WEB SEARCH results giving current context and other analysts' "
+    "views. Your job is to "
     "produce a next-session directional call for each listed China sector. Reason "
-    "ONLY from the data provided plus general market mechanics — do NOT invent "
-    "specific prices, figures, tickers, or events that were not given. Output is a "
+    "ONLY from the data provided (including the web-search snippets) plus general "
+    "market mechanics — do NOT invent "
+    "specific prices, figures, tickers, or events that were not given. Prefer recent "
+    "web results over stale ones and do not over-weight a single headline. Output is a "
     "probabilistic lean for a human to weigh, NOT investment advice, NOT a guarantee, "
     "and NEVER a buy/sell instruction. Return STRICT JSON with exactly this shape: "
     '{"calls": [{"sector": <one of the given sectors>, "direction": '
@@ -96,8 +100,12 @@ _VALID_CONV = {"low", "med", "high"}
 
 # ── pure context assembly + prompt (unit-tested) ─────────────────────────
 def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
-                  macro_events: list[dict], reflections: list[dict]) -> dict:
-    """Assemble the deterministic context handed to the model. Pure."""
+                  macro_events: list[dict], reflections: list[dict],
+                  web_research: list[dict] | None = None) -> dict:
+    """Assemble the deterministic context handed to the model. Pure.
+
+    ``web_research`` is the optional live-search layer: a list of
+    {title, url, snippet, published}. Empty/omitted when search is disabled."""
     us = [
         {"symbol": r.get("symbol"), "sector": r.get("sector"), "pct_change": r.get("pct_change")}
         for r in us_rows if r.get("pct_change") is not None
@@ -118,6 +126,11 @@ def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
          "reason": r.get("likely_reason_for_miss")}
         for r in reflections
     ][:5]
+    web = [
+        {"title": r.get("title"), "snippet": r.get("snippet"),
+         "url": r.get("url"), "published": r.get("published")}
+        for r in (web_research or []) if r.get("snippet") or r.get("title")
+    ][:12]  # cap so the search context can't blow up the prompt
     return {
         "trade_date": trade_date,
         "sectors": list(CHINA_SECTORS),
@@ -126,6 +139,7 @@ def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
         "news": news,
         "macro_events": macro,
         "recent_performance": memory,
+        "web_research": web,
     }
 
 
@@ -254,11 +268,14 @@ def get_analyst_llm() -> tuple[Callable[[dict], dict], str, str] | None:
 
 
 # ── job entrypoint ───────────────────────────────────────────────────────
-def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
-    """Optional AI-analyst pass. Reads the day's data + reflection memory, asks
-    the LLM for per-sector calls, and records them in `llm_calls` (separate from
-    the rule-based predictions). Returns the number of calls written. No-ops
-    (returns 0) when the analyst is not configured. Never raises."""
+def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None) -> int:
+    """Optional AI-analyst pass. Reads the day's data + reflection memory, runs an
+    optional live web search for fresh context, asks the LLM for per-sector calls,
+    and records them in `llm_calls` (separate from the rule-based predictions).
+    Returns the number of calls written. No-ops (returns 0) when the analyst is not
+    configured. Never raises."""
+    from . import websearch
+
     now = datetime.now(timezone.utc)
     trade_date = trade_date or now.date().isoformat()
     created_at = now.isoformat()
@@ -271,12 +288,19 @@ def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
     analyze_fn, provider, model = resolved
 
     try:
+        # Optional live web search (fail-soft: empty results if disabled/erroring).
+        web, search_provider, n_queries = websearch.run_search(trade_date, search_one)
+        if search_provider:
+            print(f"run_llm_analysis: web search ({search_provider}) ran "
+                  f"{n_queries} queries → {len(web)} results")
+
         ctx = build_context(
             trade_date,
             db.get_rows_for_date("us_close", trade_date),
             db.get_rows_for_date("news", trade_date),
             db.macro_event_dates(trade_date),
             db.recent_reflections(5),
+            web_research=web,
         )
         # Backends return (parsed, usage); a test stub may return just the parsed
         # dict — treat that as "no usage reported".
@@ -315,6 +339,18 @@ def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
                       f"(~${cost:.4f}) recorded")
             except Exception as e:  # noqa: BLE001
                 print(f"run_llm_analysis: usage metering skipped ({e!r})")
+
+        # Meter the web search too (per-query cost from config; 0 on a free tier).
+        if search_provider and n_queries:
+            try:
+                search_cost = round(n_queries * config.SEARCH_PRICE_PER_QUERY, 6)
+                db.record_llm_usage({
+                    "trade_date": trade_date, "call_type": "search",
+                    "provider": search_provider, "model": f"search:{search_provider}",
+                    "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0,
+                    "total_tokens": 0, "cost_usd": search_cost, "created_at": created_at})
+            except Exception as e:  # noqa: BLE001
+                print(f"run_llm_analysis: search metering skipped ({e!r})")
 
         print(f"run_llm_analysis: wrote {len(calls)} {provider} call(s) "
               f"({model}) for {trade_date}")

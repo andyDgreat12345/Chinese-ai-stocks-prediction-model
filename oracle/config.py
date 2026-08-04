@@ -89,6 +89,16 @@ CORRELATION_WINDOWS = [30, 60, 90]  # rolling windows (trading days)
 # NOT auto-applied, until this is flipped on (spec §4b-iii, human-in-the-loop).
 AUTO_APPLY_WEIGHT_ADJUSTMENTS = False
 
+# ── Live web search (optional — augments the AI analyst) ─────────────────
+# DeepSeek's API has no web search, so we run it ourselves and feed the results
+# into the analyst's prompt. OFF by default: set ORACLE_SEARCH_PROVIDER=tavily
+# (or brave) + the matching key secret (TAVILY_API_KEY / BRAVE_API_KEY) to enable.
+SEARCH_MAX_QUERIES = int(os.environ.get("ORACLE_SEARCH_MAX_QUERIES") or 6)
+SEARCH_MAX_RESULTS = int(os.environ.get("ORACLE_SEARCH_MAX_RESULTS") or 4)
+# Estimated USD per search query for the spend meter (0 on a free tier; set to
+# your plan's per-query rate to track it). Override via ORACLE_SEARCH_PRICE_PER_QUERY.
+SEARCH_PRICE_PER_QUERY = float(os.environ.get("ORACLE_SEARCH_PRICE_PER_QUERY") or 0.0)
+
 # ── LLM token pricing (USD per 1,000,000 tokens) ─────────────────────────
 # Used ONLY to *estimate* spend for the usage meter (oracle/analysis/pricing.py);
 # the provider's invoice is the source of truth. VERIFY against current pricing —
