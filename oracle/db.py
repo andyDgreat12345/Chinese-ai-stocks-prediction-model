@@ -253,6 +253,59 @@ def insert_prediction_score(row: dict, db_path=None) -> None:
         conn.close()
 
 
+def upsert_llm_call(row: dict, db_path=None) -> None:
+    """Insert-or-replace one LLM analyst call for a (date, sector). Row:
+    {trade_date, sector, provider, model, direction, conviction, tradeable_etf,
+     key_drivers (JSON str), rationale, created_at}. Recorded separately from
+    the rule-based `predictions` so its edge can be measured independently."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO llm_calls
+                   (trade_date, sector, provider, model, direction, conviction,
+                    tradeable_etf, key_drivers, rationale, created_at)
+               VALUES
+                   (:trade_date, :sector, :provider, :model, :direction, :conviction,
+                    :tradeable_etf, :key_drivers, :rationale, :created_at)
+               ON CONFLICT(trade_date, sector) DO UPDATE SET
+                    provider=excluded.provider, model=excluded.model,
+                    direction=excluded.direction, conviction=excluded.conviction,
+                    tradeable_etf=excluded.tradeable_etf,
+                    key_drivers=excluded.key_drivers, rationale=excluded.rationale,
+                    created_at=excluded.created_at""",
+            row,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def llm_calls_for_date(trade_date: str, db_path=None) -> list[dict]:
+    conn = connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT * FROM llm_calls WHERE trade_date = ? ORDER BY sector", (trade_date,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def latest_llm_calls(db_path=None) -> list[dict]:
+    """All LLM analyst calls for the most recent date one was produced."""
+    conn = connect(db_path)
+    try:
+        latest = conn.execute("SELECT MAX(trade_date) AS d FROM llm_calls").fetchone()
+        if not latest or latest["d"] is None:
+            return []
+        cur = conn.execute(
+            "SELECT * FROM llm_calls WHERE trade_date = ? ORDER BY sector", (latest["d"],)
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def distinct_symbols(table: str, db_path=None) -> list[str]:
     if table not in ("us_close", "china_close"):
         raise ValueError(f"unexpected table: {table}")

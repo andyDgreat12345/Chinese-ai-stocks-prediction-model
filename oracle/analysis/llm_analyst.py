@@ -1,0 +1,280 @@
+"""Optional LLM research desk — the AI analyst (spec §4.2 / §7b).
+
+The rule-based pipeline (scoring.py + pipeline.py) always runs and is the
+system's baseline. This module adds an *optional* LLM analyst that reads the
+same day's data — US closes, overnight news, macro calendar, and the reflection
+log (what has worked before) — and produces a structured per-sector
+buy/sell/hold call with conviction, key drivers, and the foreign-tradeable ETF
+each call maps to.
+
+Design, mirroring reflection/llm.py:
+  * provider-agnostic — DeepSeek (default; its OpenAI-compatible endpoint) or
+    Claude (official Anthropic SDK), selected by env var;
+  * **off by default** — if no provider/key is configured the job no-ops, so
+    the rule-based path is never affected;
+  * the LLM's calls are recorded in a SEPARATE table (`llm_calls`), never
+    overwriting the rule-based `predictions`, so the backtest can measure the
+    analyst's edge against the rule-based model and the naive baselines before
+    a cent of real money rides on it;
+  * fail-soft — any error or refusal leaves the day's rule-based prediction as
+    the sole record.
+
+The prompt-building and parsing are pure functions (no I/O) so they unit-test
+without a network or DB.
+
+Configuration (env):
+    ORACLE_ANALYST_PROVIDER = deepseek | claude | (unset -> disabled)
+    ORACLE_ANALYST_MODEL    = model id override
+        deepseek default: deepseek-chat
+        claude default:   claude-opus-5
+    DEEPSEEK_API_KEY  (deepseek)  /  ANTHROPIC_API_KEY (claude)
+
+NOTE ON "DEEP SEARCH": DeepSeek's *API* does not expose the live web search in
+its consumer app. The analyst reasons over the news we already ingest (RSS) plus
+the market data and reflection memory. A live web-search feed is a clean future
+add-on, not a dependency here.
+
+**Not investment advice.** Output is a probabilistic directional signal for the
+user to weigh — not a buy/sell instruction, not a guarantee, never auto-executed.
+"""
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timezone
+from typing import Callable
+
+from .. import config, db
+from .pipeline import CHINA_SECTORS
+
+_SYSTEM = (
+    "You are the research desk of a China-equity prediction system. You are given "
+    "one trading day's inputs: US market closes by sector, overnight world-news "
+    "headlines (with a category and a sentiment score), any scheduled macro events, "
+    "and a short memory of how the system's recent predictions fared. Your job is to "
+    "produce a next-session directional call for each listed China sector. Reason "
+    "ONLY from the data provided plus general market mechanics — do NOT invent "
+    "specific prices, figures, tickers, or events that were not given. Output is a "
+    "probabilistic lean for a human to weigh, NOT investment advice, NOT a guarantee, "
+    "and NEVER a buy/sell instruction. Return STRICT JSON with exactly this shape: "
+    '{"calls": [{"sector": <one of the given sectors>, "direction": '
+    '"bullish"|"neutral"|"bearish", "conviction": "low"|"med"|"high", '
+    '"key_drivers": [<short strings>], "rationale": <one or two sentences>}], '
+    '"market_note": <one sentence overall context>}. '
+    "Base conviction on how much the evidence actually supports the call — default "
+    "to neutral/low when the inputs are thin or conflicting."
+)
+
+# JSON schema for Claude structured outputs (analyst fields only).
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "calls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "sector": {"type": "string"},
+                    "direction": {"type": "string", "enum": ["bullish", "neutral", "bearish"]},
+                    "conviction": {"type": "string", "enum": ["low", "med", "high"]},
+                    "key_drivers": {"type": "array", "items": {"type": "string"}},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["sector", "direction", "conviction", "key_drivers", "rationale"],
+                "additionalProperties": False,
+            },
+        },
+        "market_note": {"type": "string"},
+    },
+    "required": ["calls", "market_note"],
+    "additionalProperties": False,
+}
+
+_VALID_DIR = {"bullish", "neutral", "bearish"}
+_VALID_CONV = {"low", "med", "high"}
+
+
+# ── pure context assembly + prompt (unit-tested) ─────────────────────────
+def build_context(trade_date: str, us_rows: list[dict], news_rows: list[dict],
+                  macro_events: list[dict], reflections: list[dict]) -> dict:
+    """Assemble the deterministic context handed to the model. Pure."""
+    us = [
+        {"symbol": r.get("symbol"), "sector": r.get("sector"), "pct_change": r.get("pct_change")}
+        for r in us_rows if r.get("pct_change") is not None
+    ]
+    news = [
+        {"category": r.get("category"), "sentiment": r.get("sentiment"),
+         "headline": r.get("headline")}
+        for r in news_rows if r.get("headline")
+    ][:25]  # cap to keep the prompt (and cost) bounded
+    macro = [
+        {"category": m.get("category"), "description": m.get("description")}
+        for m in macro_events
+    ]
+    memory = [
+        {"date": r.get("trade_date"),
+         "worked": r.get("signals_that_worked"),
+         "missed": r.get("signals_that_missed"),
+         "reason": r.get("likely_reason_for_miss")}
+        for r in reflections
+    ][:5]
+    return {
+        "trade_date": trade_date,
+        "sectors": list(CHINA_SECTORS),
+        "sector_tradeable_etf": dict(config.SECTOR_TRADEABLE_ETF),
+        "us_closes": us,
+        "news": news,
+        "macro_events": macro,
+        "recent_performance": memory,
+    }
+
+
+def _prompt(ctx: dict) -> str:
+    """Render the context as a compact JSON block the model reasons over."""
+    payload = {k: v for k, v in ctx.items() if k != "sector_tradeable_etf"}
+    lines = [
+        f"Trade date (China session to call): {ctx['trade_date']}",
+        f"Sectors to call: {', '.join(ctx['sectors'])}",
+        "Foreign-tradeable proxy per sector (for context, label each call): "
+        + json.dumps(ctx["sector_tradeable_etf"]),
+        "",
+        "Inputs (JSON):",
+        json.dumps(payload, ensure_ascii=False),
+    ]
+    return "\n".join(lines)
+
+
+def parse_calls(raw: dict, trade_date: str) -> list[dict]:
+    """Validate + normalize the model's JSON into per-sector call rows. Pure.
+    Unknown sectors are dropped; each listed sector appears at most once. The
+    tradeable ETF is filled deterministically from config, not from the model."""
+    out: dict[str, dict] = {}
+    for c in raw.get("calls", []) or []:
+        sector = c.get("sector")
+        if sector not in CHINA_SECTORS or sector in out:
+            continue
+        direction = c.get("direction")
+        conviction = c.get("conviction")
+        if direction not in _VALID_DIR or conviction not in _VALID_CONV:
+            continue
+        drivers = c.get("key_drivers") or []
+        if not isinstance(drivers, list):
+            drivers = [str(drivers)]
+        out[sector] = {
+            "sector": sector,
+            "direction": direction,
+            "conviction": conviction,
+            "tradeable_etf": config.SECTOR_TRADEABLE_ETF.get(sector),
+            "key_drivers": [str(d) for d in drivers][:6],
+            "rationale": str(c.get("rationale") or "")[:600],
+        }
+    return [out[s] for s in CHINA_SECTORS if s in out]
+
+
+# ── provider backends ────────────────────────────────────────────────────
+def _deepseek_analyze(ctx: dict) -> dict:
+    """DeepSeek via its OpenAI-compatible endpoint (stdlib only)."""
+    import urllib.request
+
+    key = os.environ["DEEPSEEK_API_KEY"]
+    model = os.environ.get("ORACLE_ANALYST_MODEL") or "deepseek-chat"
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _prompt(ctx)},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.4,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.deepseek.com/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=90) as r:  # noqa: S310 — fixed host
+        payload = json.loads(r.read())
+    return json.loads(payload["choices"][0]["message"]["content"])
+
+
+def _claude_analyze(ctx: dict) -> dict:
+    import anthropic  # lazy import so the package stays optional
+
+    model = os.environ.get("ORACLE_ANALYST_MODEL") or "claude-opus-5"
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=model,
+        max_tokens=4096,
+        system=_SYSTEM,
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _SCHEMA}},
+        messages=[{"role": "user", "content": _prompt(ctx)}],
+    )
+    if resp.stop_reason == "refusal":
+        raise RuntimeError("claude refused the analysis request")
+    text = next(b.text for b in resp.content if b.type == "text")
+    return json.loads(text)
+
+
+def get_analyst_llm() -> tuple[Callable[[dict], dict], str, str] | None:
+    """Return (analyze_fn, provider, model) per env config, or None when the
+    analyst is not configured (in which case the job no-ops and the rule-based
+    pipeline stands alone)."""
+    provider = (os.environ.get("ORACLE_ANALYST_PROVIDER") or "").strip().lower()
+    if provider == "deepseek":
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            return None
+        model = os.environ.get("ORACLE_ANALYST_MODEL") or "deepseek-chat"
+        return (_deepseek_analyze, "deepseek", model)
+    if provider == "claude":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            return None
+        model = os.environ.get("ORACLE_ANALYST_MODEL") or "claude-opus-5"
+        return (_claude_analyze, "claude", model)
+    return None
+
+
+# ── job entrypoint ───────────────────────────────────────────────────────
+def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
+    """Optional AI-analyst pass. Reads the day's data + reflection memory, asks
+    the LLM for per-sector calls, and records them in `llm_calls` (separate from
+    the rule-based predictions). Returns the number of calls written. No-ops
+    (returns 0) when the analyst is not configured. Never raises."""
+    now = datetime.now(timezone.utc)
+    trade_date = trade_date or now.date().isoformat()
+    created_at = now.isoformat()
+
+    resolved = get_analyst_llm() if llm is None else (llm, "test", "test")
+    if resolved is None:
+        print("run_llm_analysis: analyst not configured "
+              "(set ORACLE_ANALYST_PROVIDER=deepseek|claude + its API key) — skipping")
+        return 0
+    analyze_fn, provider, model = resolved
+
+    try:
+        ctx = build_context(
+            trade_date,
+            db.get_rows_for_date("us_close", trade_date),
+            db.get_rows_for_date("news", trade_date),
+            db.macro_event_dates(trade_date),
+            db.recent_reflections(5),
+        )
+        calls = parse_calls(analyze_fn(ctx), trade_date)
+        for c in calls:
+            db.upsert_llm_call({
+                "trade_date": trade_date,
+                "sector": c["sector"],
+                "provider": provider,
+                "model": model,
+                "direction": c["direction"],
+                "conviction": c["conviction"],
+                "tradeable_etf": c["tradeable_etf"],
+                "key_drivers": json.dumps(c["key_drivers"]),
+                "rationale": c["rationale"],
+                "created_at": created_at,
+            })
+        print(f"run_llm_analysis: wrote {len(calls)} {provider} call(s) "
+              f"({model}) for {trade_date}")
+        return len(calls)
+    except Exception as e:  # noqa: BLE001 — analyst must never crash the pipeline
+        print(f"run_llm_analysis FAILED (rule-based prediction stands): {e!r}")
+        return 0

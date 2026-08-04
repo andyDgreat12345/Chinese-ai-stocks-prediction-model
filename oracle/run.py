@@ -14,7 +14,7 @@ from .jobs import REGISTRY
 
 # Canonical daily order (matches the CST schedule).
 ORDER = [
-    "fetch_us_close", "fetch_world_news", "run_analysis",
+    "fetch_us_close", "fetch_world_news", "run_analysis", "run_llm_analysis",
     "pre_open_refresh", "fetch_china_close", "reflect_and_update",
 ]
 
@@ -22,7 +22,7 @@ ORDER = [
 # morning half produces the day's prediction; the afternoon half (after the
 # China close) scores it and reflects.
 GROUPS = {
-    "morning": ["fetch_us_close", "fetch_world_news", "run_analysis"],
+    "morning": ["fetch_us_close", "fetch_world_news", "run_analysis", "run_llm_analysis"],
     "afternoon": ["fetch_china_close", "reflect_and_update"],
     "all": ORDER,
 }

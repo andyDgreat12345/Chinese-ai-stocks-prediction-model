@@ -43,6 +43,11 @@ jobs:
       # ORACLE_LLM_PROVIDER (claude|deepseek) and the matching API-key secret.
       ORACLE_LLM_PROVIDER: ${{ vars.ORACLE_LLM_PROVIDER }}
       ORACLE_LLM_MODEL: ${{ vars.ORACLE_LLM_MODEL }}
+      # Optional AI research desk (spec §4.2). Enable by setting repo variable
+      # ORACLE_ANALYST_PROVIDER (deepseek|claude) + the matching API-key secret.
+      # Off by default → the rule-based prediction runs alone.
+      ORACLE_ANALYST_PROVIDER: ${{ vars.ORACLE_ANALYST_PROVIDER }}
+      ORACLE_ANALYST_MODEL: ${{ vars.ORACLE_ANALYST_MODEL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
     steps:
