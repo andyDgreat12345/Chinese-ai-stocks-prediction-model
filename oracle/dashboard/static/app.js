@@ -115,6 +115,35 @@ const PANELS = [
     },
   },
   {
+    id: "llm-usage", title: "AI Research Spend",
+    async render(body) {
+      const d = await getJSON("llm-usage");
+      const money = (v) => `$${Number(v || 0).toFixed(4)}`;
+      const tok = (v) => Number(v || 0).toLocaleString();
+      body.innerHTML =
+        `<div class="bigstat">
+           <span class="pct">${money(d.all_time.cost_usd)}</span>
+           <span class="lbl">all-time · ${tok(d.all_time.tokens)} tokens · ${d.all_time.calls} calls</span>
+         </div>
+         <table>
+           <tr><th>window</th><th class="num">cost</th><th class="num">tokens</th><th class="num">calls</th></tr>
+           <tr><td>today</td><td class="num">${money(d.today.cost_usd)}</td><td class="num dim">${tok(d.today.tokens)}</td><td class="num dim">${d.today.calls}</td></tr>
+           <tr><td>last 7d</td><td class="num">${money(d.last_7d.cost_usd)}</td><td class="num dim">${tok(d.last_7d.tokens)}</td><td class="num dim">${d.last_7d.calls}</td></tr>
+         </table>`;
+      if (d.by_model && d.by_model.length) {
+        const t = el("table");
+        t.innerHTML = "<tr><th>model</th><th class='num'>cost</th><th class='num'>calls</th></tr>";
+        for (const m of d.by_model) {
+          t.insertAdjacentHTML("beforeend",
+            `<tr><td>${esc(m.provider)}/${esc(m.model)}</td><td class="num">${money(m.cost_usd)}</td><td class="num dim">${m.calls}</td></tr>`);
+        }
+        body.appendChild(t);
+      }
+      if (!d.all_time.calls) body.appendChild(el("div", "empty", "No AI calls yet — enable the analyst to start metering."));
+      body.appendChild(el("div", "rationale", "Estimated from published rates; the provider invoice is truth."));
+    },
+  },
+  {
     id: "heatmap", title: "Sector Heatmap (predicted)",
     async render(body) {
       const d = await getJSON("heatmap");

@@ -306,6 +306,66 @@ def latest_llm_calls(db_path=None) -> list[dict]:
         conn.close()
 
 
+def record_llm_usage(row: dict, db_path=None) -> None:
+    """Append one LLM API call's token counts + estimated cost to the meter. Row:
+    {trade_date, call_type, provider, model, prompt_tokens, completion_tokens,
+     cached_tokens, total_tokens, cost_usd, created_at}."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO llm_usage
+                   (trade_date, call_type, provider, model, prompt_tokens,
+                    completion_tokens, cached_tokens, total_tokens, cost_usd, created_at)
+               VALUES
+                   (:trade_date, :call_type, :provider, :model, :prompt_tokens,
+                    :completion_tokens, :cached_tokens, :total_tokens, :cost_usd,
+                    :created_at)""",
+            row,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def llm_usage_summary(db_path=None) -> dict:
+    """Spend meter: token + estimated-USD totals for today, the last 7 days, and
+    all time, plus an all-time per-model breakdown. Dates keyed on created_at
+    (when the call was actually made / billed)."""
+    from datetime import datetime, timedelta, timezone
+
+    conn = connect(db_path)
+    try:
+        def agg(where: str = "", params: tuple = ()) -> dict:
+            r = conn.execute(
+                f"""SELECT COUNT(*) AS calls,
+                           COALESCE(SUM(total_tokens), 0) AS tokens,
+                           COALESCE(SUM(cost_usd), 0) AS cost
+                    FROM llm_usage {where}""", params).fetchone()
+            return {"calls": r["calls"], "tokens": r["tokens"],
+                    "cost_usd": round(r["cost"], 6)}
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        week_ago = (datetime.now(timezone.utc).date() - timedelta(days=6)).isoformat()
+        by_model = [
+            {"model": m["model"], "provider": m["provider"], "calls": m["calls"],
+             "tokens": m["tokens"], "cost_usd": round(m["cost"], 6)}
+            for m in conn.execute(
+                """SELECT model, provider, COUNT(*) AS calls,
+                          COALESCE(SUM(total_tokens), 0) AS tokens,
+                          COALESCE(SUM(cost_usd), 0) AS cost
+                   FROM llm_usage GROUP BY model, provider
+                   ORDER BY cost DESC""")
+        ]
+        return {
+            "today": agg("WHERE substr(created_at, 1, 10) = ?", (today,)),
+            "last_7d": agg("WHERE substr(created_at, 1, 10) >= ?", (week_ago,)),
+            "all_time": agg(),
+            "by_model": by_model,
+        }
+    finally:
+        conn.close()
+
+
 def distinct_symbols(table: str, db_path=None) -> list[str]:
     if table not in ("us_close", "china_close"):
         raise ValueError(f"unexpected table: {table}")

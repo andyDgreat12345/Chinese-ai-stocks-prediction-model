@@ -57,6 +57,13 @@ def test_report_buckets_and_disclaimer(client):
     assert "semis" in {m["sector"] for m in body["consider"]}
 
 
+def test_llm_usage_meter_shape(client):
+    body = client.get("/api/llm-usage").json()
+    assert all(k in body for k in ("today", "last_7d", "all_time", "by_model"))
+    assert body["all_time"]["calls"] == 0        # nothing metered in this fixture
+    assert body["disclaimer"]
+
+
 def test_heatmap_cells(client):
     cells = client.get("/api/heatmap").json()["cells"]
     assert {c["sector"] for c in cells} >= {"semis", "energy", "broad"}

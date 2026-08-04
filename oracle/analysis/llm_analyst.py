@@ -194,7 +194,22 @@ def _deepseek_analyze(ctx: dict) -> dict:
     )
     with urllib.request.urlopen(req, timeout=90) as r:  # noqa: S310 — fixed host
         payload = json.loads(r.read())
-    return json.loads(payload["choices"][0]["message"]["content"])
+    parsed = json.loads(payload["choices"][0]["message"]["content"])
+    return parsed, _usage_from_openai(payload.get("usage"))
+
+
+def _usage_from_openai(u: dict | None) -> dict:
+    """Normalize an OpenAI-compatible `usage` block (DeepSeek included). DeepSeek
+    reports cache hits as `prompt_cache_hit_tokens`; OpenAI nests them under
+    `prompt_tokens_details.cached_tokens`."""
+    u = u or {}
+    cached = (u.get("prompt_cache_hit_tokens")
+              or (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+    prompt = u.get("prompt_tokens", 0)
+    completion = u.get("completion_tokens", 0)
+    return {"prompt_tokens": prompt, "completion_tokens": completion,
+            "cached_tokens": cached,
+            "total_tokens": u.get("total_tokens", prompt + completion)}
 
 
 def _claude_analyze(ctx: dict) -> dict:
@@ -212,7 +227,12 @@ def _claude_analyze(ctx: dict) -> dict:
     if resp.stop_reason == "refusal":
         raise RuntimeError("claude refused the analysis request")
     text = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(text)
+    u = resp.usage
+    cached = getattr(u, "cache_read_input_tokens", 0) or 0
+    usage = {"prompt_tokens": u.input_tokens, "completion_tokens": u.output_tokens,
+             "cached_tokens": cached,
+             "total_tokens": u.input_tokens + u.output_tokens}
+    return json.loads(text), usage
 
 
 def get_analyst_llm() -> tuple[Callable[[dict], dict], str, str] | None:
@@ -258,7 +278,11 @@ def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
             db.macro_event_dates(trade_date),
             db.recent_reflections(5),
         )
-        calls = parse_calls(analyze_fn(ctx), trade_date)
+        # Backends return (parsed, usage); a test stub may return just the parsed
+        # dict — treat that as "no usage reported".
+        result = analyze_fn(ctx)
+        parsed, usage = result if isinstance(result, tuple) else (result, None)
+        calls = parse_calls(parsed, trade_date)
         for c in calls:
             db.upsert_llm_call({
                 "trade_date": trade_date,
@@ -272,6 +296,26 @@ def run_llm_analysis(trade_date: str | None = None, llm=None) -> int:
                 "rationale": c["rationale"],
                 "created_at": created_at,
             })
+        # Meter the spend (best-effort — a missing/odd usage block must not lose
+        # the calls we already persisted).
+        if usage:
+            try:
+                from .pricing import cost_usd
+                cost = cost_usd(model, usage["prompt_tokens"],
+                                usage["completion_tokens"], usage.get("cached_tokens", 0))
+                db.record_llm_usage({
+                    "trade_date": trade_date, "call_type": "analyst",
+                    "provider": provider, "model": model,
+                    "prompt_tokens": usage["prompt_tokens"],
+                    "completion_tokens": usage["completion_tokens"],
+                    "cached_tokens": usage.get("cached_tokens", 0),
+                    "total_tokens": usage["total_tokens"],
+                    "cost_usd": cost, "created_at": created_at})
+                print(f"run_llm_analysis: usage {usage['total_tokens']} tokens "
+                      f"(~${cost:.4f}) recorded")
+            except Exception as e:  # noqa: BLE001
+                print(f"run_llm_analysis: usage metering skipped ({e!r})")
+
         print(f"run_llm_analysis: wrote {len(calls)} {provider} call(s) "
               f"({model}) for {trade_date}")
         return len(calls)

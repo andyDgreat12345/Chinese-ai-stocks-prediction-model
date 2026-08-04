@@ -100,6 +100,27 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- LLM TOKEN / COST METER (§4.2 cost governance)
+-- One row per LLM API call (analyst today; future research passes too), with
+-- the token counts the provider reported and an *estimated* USD cost. This is
+-- the running meter so deeper research never surprises the bill — the
+-- provider's own invoice remains the source of truth.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date        TEXT,                 -- session the call was for (nullable)
+    call_type         TEXT,                 -- analyst / reflection / research-* ...
+    provider          TEXT,                 -- deepseek / claude
+    model             TEXT,
+    prompt_tokens     INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    cached_tokens     INTEGER DEFAULT 0,    -- prompt tokens served from cache (cheaper)
+    total_tokens      INTEGER DEFAULT 0,
+    cost_usd          REAL DEFAULT 0,       -- estimated from config.LLM_PRICES
+    created_at        TEXT NOT NULL         -- when the call was made (spend accrues here)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- US → CHINA INFLUENCE MEASUREMENT (spec §4b-ii)
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS correlations (

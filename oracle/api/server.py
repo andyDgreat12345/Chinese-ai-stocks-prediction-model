@@ -122,6 +122,15 @@ def report() -> dict:
     return r
 
 
+@app.get("/api/llm-usage")
+def llm_usage() -> dict:
+    """AI research spend meter (§4.2 cost governance): token + estimated-USD
+    totals for today / last 7d / all time, and a per-model breakdown."""
+    s = db.llm_usage_summary()
+    s["disclaimer"] = config.DISCLAIMER
+    return s
+
+
 @app.get("/api/heatmap")
 def heatmap() -> dict:
     """Sectors colored by the *predicted* China-sector score, not raw price (§5)."""
