@@ -23,6 +23,7 @@ permissions:
   contents: write   # push the oracle-state branch
   pages: write      # deploy to Pages
   id-token: write   # Pages OIDC
+  issues: write     # post the daily action report as an issue (emails the user)
 
 concurrency:
   group: oracle
@@ -99,6 +100,34 @@ jobs:
             *)                           # morning / afternoon / all daily jobs
               python -m oracle.run "$phase" ;;
           esac
+
+      - name: Deliver daily action report (morning only — right after the US close)
+        # Merges the rule-based prediction and the AI analyst into one plain
+        # "lean constructive / lean cautious" outlook and posts it as an issue;
+        # the @mention makes GitHub email it to the user (same zero-credential
+        # path as the weekly digest — no SMTP secret needed).
+        if: steps.phase.outputs.phase == 'morning' || steps.phase.outputs.phase == 'all'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MENTION: ${{ vars.DIGEST_MENTION || github.repository_owner }}
+        run: |
+          {
+            echo "Hi @${MENTION} —"
+            echo
+            python -m oracle.report --md || echo "(daily report unavailable this run)"
+          } > report.md
+          cat report.md
+          title="China Market Oracle — daily outlook ($(date -u +%F))"
+          if ! gh issue create --repo "${{ github.repository }}" \
+                --title "$title" --body-file report.md --label daily-outlook 2>/tmp/err; then
+            # A fresh repo may not have the 'daily-outlook' label yet — retry without it.
+            if grep -qi "label" /tmp/err; then
+              gh issue create --repo "${{ github.repository }}" \
+                --title "$title" --body-file report.md
+            else
+              cat /tmp/err >&2; exit 1
+            fi
+          fi
 
       - name: Build static site
         run: python -m oracle.site_build site
