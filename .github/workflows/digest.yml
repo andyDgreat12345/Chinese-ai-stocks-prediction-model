@@ -1,16 +1,24 @@
 name: Weekly digest
 
-# Emails a weekly backtest digest — how the model, the naive baselines, and the
-# optional AI analyst ("llm (recorded)") are tracking — straight to your inbox,
-# so you don't have to check the dashboard.
+# Posts a weekly backtest digest — how the model, the naive baselines, and the
+# optional AI analyst ("llm (recorded)") are tracking — as a GitHub Issue, and
+# @mentions the repo owner so GitHub emails it straight to their inbox.
 #
-# One-time setup (repo → Settings → Secrets and variables → Actions → Secrets):
-#   MAIL_USERNAME = your Gmail address (the sending account)
-#   MAIL_PASSWORD = a Gmail *app password* (not your normal password —
-#                   myaccount.google.com/apppasswords, requires 2-Step Verification)
-# The recipient is fixed below. The backtest runs against the state the daily
-# Oracle jobs persist on the `oracle-state` branch; it degrades gracefully to a
-# "no data yet" digest before those runs have accumulated anything.
+# WHY AN ISSUE INSTEAD OF SMTP EMAIL:
+#   Sending a real email requires a mailbox's password (a Gmail app password,
+#   etc.) stored as a secret — a hassle, and Google kept rejecting it. Opening an
+#   issue needs NO credentials at all: it uses the built-in GITHUB_TOKEN. GitHub's
+#   own notification system then delivers the digest to whatever address you pick.
+#
+# ONE-TIME SETUP (no secrets to add) — just point GitHub notifications at your
+# inbox, then the digest arrives as an email every Monday:
+#   1. github.com/settings/emails        → add & verify tianyisun2009@outlook.com
+#   2. github.com/settings/notifications → set "Default notification email" to it
+#      (and make sure "Email" is ticked for Participating, @mentions, and pushes).
+# Because the issue @mentions the owner, the email arrives even without watching
+# the repo. The backtest runs against the state the daily Oracle jobs persist on
+# the `oracle-state` branch; it degrades gracefully to a "no data yet" digest
+# before those runs have accumulated anything.
 
 on:
   schedule:
@@ -19,13 +27,17 @@ on:
 
 permissions:
   contents: read           # to fetch the persisted oracle-state branch
+  issues: write            # to open the weekly digest issue
 
 jobs:
   digest:
     runs-on: ubuntu-latest
     env:
-      MAIL_TO: tianyisun2009@gmail.com
+      # Who gets @mentioned (and therefore emailed). The repo owner by default —
+      # override by setting repo variable DIGEST_MENTION to a GitHub username.
+      MENTION: ${{ vars.DIGEST_MENTION || github.repository_owner }}
       ORACLE_DB: ${{ github.workspace }}/_state/oracle.db
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,30 +60,33 @@ jobs:
       - name: Build the digest (backtest is stdlib-only — no pip install needed)
         run: |
           {
-            echo "China Market Oracle — weekly digest ($(date -u +%F))"
+            echo "Hi @${MENTION} — here is this week's China Market Oracle digest ($(date -u +%F))."
             echo
+            echo '```'
             python -m oracle.backtest || echo "(backtest could not run this week)"
+            echo '```'
             echo
-            echo "Reading it: a strategy earns trust only if it beats the baselines on"
+            echo "**Reading it:** a strategy earns trust only if it beats the baselines on"
             echo "bet-accuracy AND net Sharpe with a small p-value. The AI analyst row"
-            echo "('llm (recorded)') is scored only on the days it actually called — a"
+            echo "(\`llm (recorded)\`) is scored only on the days it actually called — a"
             echo "small bet count means the p-value is not meaningful yet. If there is no"
             echo "AI row, the DeepSeek analyst is not enabled (set repo variable"
-            echo "ORACLE_ANALYST_PROVIDER=deepseek + secret DEEPSEEK_API_KEY)."
+            echo "\`ORACLE_ANALYST_PROVIDER=deepseek\` + secret \`DEEPSEEK_API_KEY\`)."
             echo
-            echo "Not investment advice — a probabilistic signal to weigh yourself."
-          } > digest.txt
-          cat digest.txt
+            echo "_Not investment advice — a probabilistic signal to weigh yourself._"
+          } > digest.md
+          cat digest.md
 
-      - name: Email the digest
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "China Market Oracle — weekly digest"
-          to: ${{ env.MAIL_TO }}
-          from: China Market Oracle <${{ secrets.MAIL_USERNAME }}>
-          body: file://digest.txt
+      - name: Open the digest issue (GitHub emails it to the mentioned user)
+        run: |
+          title="China Market Oracle — weekly digest ($(date -u +%F))"
+          if ! gh issue create --repo "${{ github.repository }}" \
+                --title "$title" --body-file digest.md --label digest 2>/tmp/err; then
+            # A fresh repo may not have the 'digest' label yet — retry without it.
+            if grep -qi "label" /tmp/err; then
+              gh issue create --repo "${{ github.repository }}" \
+                --title "$title" --body-file digest.md
+            else
+              cat /tmp/err >&2; exit 1
+            fi
+          fi
