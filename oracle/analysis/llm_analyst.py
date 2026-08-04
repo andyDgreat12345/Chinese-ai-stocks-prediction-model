@@ -206,18 +206,34 @@ def parse_calls(raw: dict, trade_date: str) -> list[dict]:
     return [out[s] for s in CHINA_SECTORS if s in out]
 
 
+def _candidate_forms(cand: dict) -> set[str]:
+    """The ticker spellings a model might use for one candidate — primary ticker,
+    its exchange-suffix-stripped root, and the foreign-tradeable form (US ADR or
+    HK line, with/without the 'HK:' prefix). Used for lenient matching."""
+    forms = {cand["ticker"].upper(), cand["ticker"].upper().split(".")[0]}
+    if cand.get("tradeable"):
+        tr = cand["tradeable"].upper()
+        forms |= {tr, tr.replace("HK:", ""), tr.replace("HK:", "").split(".")[0]}
+    return {f for f in forms if f}
+
+
 def _validate_pick(sector: str, pick) -> dict | None:
-    """Keep the model's single-name pick only if its ticker is in the sector's
-    vetted candidate list (blocks hallucinated tickers); fill name/tradeable
-    authoritatively from config, keep only the model's short note."""
-    if not isinstance(pick, dict) or not pick.get("ticker"):
+    """Keep the model's single-name pick only if it resolves to a name in the
+    sector's vetted candidate list (blocks hallucinated names); match leniently by
+    ticker spelling OR company name, then fill ticker/name/tradeable authoritatively
+    from config, keeping only the model's short note."""
+    if not isinstance(pick, dict):
         return None
-    by_ticker = {s["ticker"]: s for s in config.SECTOR_STOCKS.get(sector, [])}
-    cand = by_ticker.get(pick["ticker"])
-    if not cand:
-        return None
-    return {"ticker": cand["ticker"], "name": cand["name"],
-            "tradeable": cand["tradeable"], "note": str(pick.get("note") or "")[:200]}
+    tick = str(pick.get("ticker") or "").strip().upper()
+    tbase = tick.split(".")[0].replace("HK:", "")
+    name = str(pick.get("name") or "").strip().lower()
+    for cand in config.SECTOR_STOCKS.get(sector, []):
+        forms = _candidate_forms(cand)
+        if (tick and (tick in forms or tbase in forms)) or \
+           (name and (name in cand["name"].lower() or cand["name"].lower() in name)):
+            return {"ticker": cand["ticker"], "name": cand["name"],
+                    "tradeable": cand["tradeable"], "note": str(pick.get("note") or "")[:200]}
+    return None
 
 
 # ── provider backends ────────────────────────────────────────────────────
