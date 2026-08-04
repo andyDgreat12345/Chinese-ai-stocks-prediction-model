@@ -167,6 +167,27 @@ drivers, and the foreign-tradeable ETF (ASHR/KWEB/…) each call maps to.
   as the sole record. Output is a probabilistic signal with the standard
   disclaimer — not a buy/sell instruction, never auto-executed.
 
+- **Multi-pass reasoning chain (optional).** Instead of one shallow call, run the
+  inputs through three chained passes the way a real desk works — and pay ~3× the
+  tokens for it (shown on the spend meter, which is why it's opt-in):
+
+  1. **Macro thesis** — a strategist reads the whole tape + news + web results into
+     a regime view (risk-on/off), key risks, and a per-sector bias;
+  2. **Sector deep-dive** — an analyst builds an explicit bull *and* bear case per
+     sector against that thesis, free to disagree where the evidence warrants;
+  3. **Devil's advocate / risk** — a risk officer stress-tests each call, downgrades
+     thin-evidence conviction, and emits the final calls.
+
+  ```bash
+  export ORACLE_ANALYST_MODE=chain               # enable the chain (default: single)
+  export ORACLE_ANALYST_THESIS_MODEL=deepseek-reasoner   # optional: reason pass 1
+  python -m oracle.run run_llm_analysis
+  ```
+
+  On GitHub Actions, set repo **variable** `ORACLE_ANALYST_MODE=chain`. Each pass is
+  metered separately (`analyst-thesis` / `analyst-deepdive` / `analyst-risk`) so you
+  can see exactly what the added depth costs.
+
 - **Live web search (optional).** DeepSeek's *API* has no web search (that's an
   app-only feature), so the system runs the search itself and feeds fresh results
   into the analyst's prompt — the standard search-augmented pattern. Off by
