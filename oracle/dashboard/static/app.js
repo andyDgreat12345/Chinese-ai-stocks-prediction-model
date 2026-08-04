@@ -45,6 +45,28 @@ function tag(direction) {
 }
 function emptyNote(msg) { return `<div class="empty">${esc(msg)}</div>`; }
 
+// Daily-report direction glyph, colored by sign.
+function dirSpan(dir) {
+  const label = { bullish: "▲ up", bearish: "▼ down", neutral: "► flat" }[dir] || "—";
+  const cls = dir === "bullish" ? "pos" : dir === "bearish" ? "neg" : "dim";
+  return `<span class="${cls}">${label}</span>`;
+}
+function reportItem(m) {
+  const dir = m.consensus == null
+    ? `mixed: rule ${dirSpan(m.rule_dir)} / AI ${dirSpan(m.llm_dir)} → no clear edge`
+    : `${dirSpan(m.consensus)} · <span class="dim">${esc(m.conviction)} (${esc(m.source)})</span>`;
+  const drivers = (m.drivers && m.drivers.length)
+    ? `<div class="rationale">${m.drivers.map(esc).join(" · ")}</div>` : "";
+  const row = el("div", "pred");
+  row.innerHTML =
+    `<div class="pred-top">
+       <span class="sector">${esc(m.label)}</span>
+       <span class="badge">${esc(m.etf)}</span>
+       <span class="repdir">${dir}</span>
+     </div>${drivers}`;
+  return row;
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
@@ -67,6 +89,28 @@ const PANELS = [
            </div>
            <div class="rationale">${esc(p.rationale)}</div>`;
         body.appendChild(row);
+      }
+    },
+  },
+  {
+    id: "report", title: "Daily Action Report", wide: true,
+    async render(body) {
+      const d = await getJSON("report");
+      const groups = [
+        ["consider", "✅ Leaning constructive — candidates to consider", "pos"],
+        ["avoid", "⛔ Leaning cautious — hold off / avoid adding", "neg"],
+        ["watch", "👀 Mixed or flat — watch, no clear edge", "dim"],
+      ];
+      const total = groups.reduce((n, [k]) => n + ((d[k] || []).length), 0);
+      if (!total) return void (body.innerHTML = emptyNote("No outlook yet — the report is produced right after the US close."));
+      body.innerHTML = "";
+      body.appendChild(el("div", "dim", `China session ${esc(d.trade_date || "—")} · ${esc(d.us_summary || "")}`));
+      if (!d.analyst_enabled) body.appendChild(el("div", "dim", "AI analyst off — rule-based read only."));
+      for (const [key, label, cls] of groups) {
+        const items = d[key] || [];
+        if (!items.length) continue;
+        body.appendChild(el("div", "rep-head " + cls, esc(label)));
+        for (const m of items) body.appendChild(reportItem(m));
       }
     },
   },

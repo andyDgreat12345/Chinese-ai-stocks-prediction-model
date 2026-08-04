@@ -127,6 +127,16 @@ tr:last-child td { border-bottom: none; }
 .pred-top .sector { font-weight: 700; text-transform: capitalize; min-width: 84px; }
 .pred-top .score { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
 
+/* ── daily action report ─────────────────────────────────── */
+.rep-head {
+  font-size: 11px; letter-spacing: .5px; margin: 10px 0 2px;
+  padding-bottom: 3px; border-bottom: 1px dashed var(--border);
+}
+.rep-head.pos { color: var(--green); }
+.rep-head.neg { color: var(--red); }
+.rep-head.dim { color: var(--dim); }
+.pred-top .repdir { margin-left: auto; font-variant-numeric: tabular-nums; }
+
 /* ── heatmap ─────────────────────────────────────────────── */
 .heatmap { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .cell {

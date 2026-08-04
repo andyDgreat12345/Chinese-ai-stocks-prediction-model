@@ -110,6 +110,18 @@ def llm_calls() -> dict:
     }
 
 
+@app.get("/api/report")
+def report() -> dict:
+    """The daily action report (spec §4.2): the rule-based prediction and the AI
+    analyst merged per sector and bucketed into lean-constructive / lean-cautious
+    / watch — the same read that's emailed after the US close, for the dashboard."""
+    from ..report import run_report
+
+    r = run_report()
+    r["disclaimer"] = config.DISCLAIMER
+    return r
+
+
 @app.get("/api/heatmap")
 def heatmap() -> dict:
     """Sectors colored by the *predicted* China-sector score, not raw price (§5)."""
