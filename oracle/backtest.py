@@ -78,6 +78,7 @@ def collect_records(start=None, end=None, db_path=None) -> list[dict]:
                 "us_spillover": sig.us_spillover,
             })
     _add_persistence(records)
+    _add_llm_calls(records, db_path)
     return records
 
 
@@ -88,6 +89,20 @@ def _add_persistence(records: list[dict]) -> None:
     for r in sorted(records, key=lambda x: (x["sector"], x["date"])):
         r["prev_actual_dir"] = last.get(r["sector"])
         last[r["sector"]] = r["actual_dir"]
+
+
+def _add_llm_calls(records: list[dict], db_path) -> None:
+    """Attach the recorded AI-analyst direction per (date, sector), if any
+    (mutates in place). The LLM strategy is scored ONLY on dates it actually
+    produced a call — an honest forward/out-of-sample read, since we don't
+    replay the LLM over history."""
+    by_date: dict[str, list[dict]] = {}
+    for r in records:
+        by_date.setdefault(r["date"], []).append(r)
+    for d, recs in by_date.items():
+        calls = {c["sector"]: c["direction"] for c in db.llm_calls_for_date(d, db_path)}
+        for r in recs:
+            r["llm_dir"] = calls.get(r["sector"])  # None -> skipped, like persistence
 
 
 # ── strategies (a predicted direction per record) ────────────────────────
@@ -101,6 +116,7 @@ def _dir_us_naive(r):
 
 
 def _dir_persistence(r):  return r.get("prev_actual_dir")  # None on day 1 -> skipped
+def _dir_llm(r):          return r.get("llm_dir")          # None if no LLM call -> skipped
 
 
 STRATEGIES = {
@@ -109,6 +125,14 @@ STRATEGIES = {
     "baseline: US-direction": _dir_us_naive,
     "baseline: persistence": _dir_persistence,
 }
+
+# Name for the recorded-AI-analyst strategy, added dynamically when the DB has
+# any llm_calls (see run_backtest / costsim).
+LLM_STRATEGY = "llm (recorded)"
+
+
+def has_llm_calls(records: list[dict]) -> bool:
+    return any(r.get("llm_dir") for r in records)
 
 
 # ── pure metric helpers ──────────────────────────────────────────────────
@@ -188,11 +212,15 @@ def calibration(records: list[dict]) -> dict:
 def run_backtest(start=None, end=None, db_path=None) -> dict:
     records = collect_records(start, end, db_path)
     dates = sorted({r["date"] for r in records})
+    # The recorded AI analyst is scored as a strategy only when calls exist.
+    strategies = dict(STRATEGIES)
+    if has_llm_calls(records):
+        strategies[LLM_STRATEGY] = _dir_llm
     report = {
         "window": {"start": dates[0] if dates else None,
                    "end": dates[-1] if dates else None,
                    "trading_days": len(dates)},
-        "strategies": {name: evaluate(records, fn) for name, fn in STRATEGIES.items()},
+        "strategies": {name: evaluate(records, fn) for name, fn in strategies.items()},
         "calibration": calibration(records),
         "n_records": len(records),
     }
@@ -244,6 +272,15 @@ def format_report(report: dict) -> str:
         "baselines on bet-accuracy AND Sharpe, with a small p-value (edge is "
         "real, not luck). Not investment advice.",
     ]
+    llm = report["strategies"].get(LLM_STRATEGY)
+    if llm is not None:
+        lines += [
+            "",
+            f"AI analyst ('{LLM_STRATEGY}') is scored only on the {llm['bets']} "
+            "bet(s) it actually placed — a forward, out-of-sample read (the LLM "
+            "is not replayed over history). Treat it as signal only once its "
+            "bet count is large enough for the p-value to mean anything.",
+        ]
     ca = report.get("cost_aware")
     if ca and "error" not in ca:
         from .costsim import format_cost_report
