@@ -107,6 +107,36 @@ def get_rows_for_date(table: str, trade_date: str, db_path=None) -> list[dict]:
         conn.close()
 
 
+def close_series(table: str, sector: str | None = None, symbol: str | None = None,
+                 limit: int = 120, end: str | None = None, db_path=None) -> list[dict]:
+    """Chronological (oldest→newest) close history for ONE instrument, for
+    technical-indicator computation. Rows: {trade_date, close, pct_change}.
+
+    Filter by ``symbol`` (preferred — a sector tag can cover several symbols at
+    very different price scales, which would corrupt the series) or by ``sector``.
+    ``end`` caps to on-or-before that date so a backtest replays only past data."""
+    if table not in ("us_close", "china_close"):
+        raise ValueError(f"unexpected table: {table}")
+    if not symbol and not sector:
+        raise ValueError("close_series needs a symbol or a sector")
+    conn = connect(db_path)
+    try:
+        conds, params = [], []
+        if symbol:
+            conds.append("symbol = ?"); params.append(symbol)
+        else:
+            conds.append("sector = ?"); params.append(sector)
+        if end:
+            conds.append("trade_date <= ?"); params.append(end)
+        rows = conn.execute(
+            f"""SELECT trade_date, close, pct_change FROM {table}
+                WHERE {' AND '.join(conds)}
+                ORDER BY trade_date DESC LIMIT ?""", (*params, limit)).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
 def insert_macro_events(rows: list[dict], db_path=None) -> int:
     """Insert macro calendar rows, skipping exact (date, description) dupes.
     Row: {event_date, category, description, weight, notes}. Returns count."""

@@ -130,15 +130,19 @@ def _us_summary(us_rows: list[dict]) -> str:
 
 
 def build_report(trade_date: str, predictions: list[dict], llm_calls: list[dict],
-                 us_rows: list[dict] | None = None) -> dict:
+                 us_rows: list[dict] | None = None,
+                 technicals: dict | None = None) -> dict:
     """Assemble the full daily outlook from the day's rule-based predictions and
-    AI-analyst calls. Pure."""
+    AI-analyst calls, plus the per-sector technical snapshot. Pure."""
     preds = {p["sector"]: p for p in predictions}
     calls = {c["sector"]: c for c in llm_calls}
+    techs = technicals or {}
     merged = []
     for sector in CHINA_SECTORS:
         m = merge_sector(sector, preds.get(sector), calls.get(sector))
         if m:
+            t = techs.get(sector) or {}
+            m["tech"] = t.get("technical_note")
             merged.append(m)
 
     def _sorted(items):
@@ -166,6 +170,8 @@ def _line(m: dict) -> list[str]:
                 f"{_DIR_ARROW.get(m['consensus'], m['consensus'])}, "
                 f"{m['conviction']} conviction ({m['source']})")
     out = [head]
+    if m.get("tech"):
+        out.append(f"  - technicals: {m['tech']}")
     if m["drivers"]:
         out.append(f"  - drivers: {', '.join(m['drivers'])}")
     if m["rationale"]:
@@ -247,7 +253,20 @@ def run_report(trade_date: str | None = None, db_path=None) -> dict:
         elif calls:
             trade_date = calls[0]["trade_date"]
     us_rows = db.get_rows_for_date("us_close", trade_date, db_path)
-    return build_report(trade_date, preds, calls, us_rows)
+    # Per-sector technical snapshot from each sector's own price history.
+    from .analysis import technicals as ta
+    techs = {}
+    for sector in CHINA_SECTORS:
+        symbol = config.CHINA_SECTOR_ETFS.get(sector)
+        if not symbol:
+            continue
+        series = [r["close"] for r in
+                  db.close_series("china_close", symbol=symbol, limit=120, end=trade_date,
+                                  db_path=db_path)
+                  if r["close"] is not None]
+        if len(series) >= 2:
+            techs[sector] = ta.compute_indicators(series)
+    return build_report(trade_date, preds, calls, us_rows, technicals=techs)
 
 
 def main(argv: list[str]) -> int:
