@@ -143,15 +143,18 @@ def _us_summary(us_rows: list[dict]) -> str:
 
 def build_report(trade_date: str, predictions: list[dict], llm_calls: list[dict],
                  us_rows: list[dict] | None = None,
-                 technicals: dict | None = None, divergence: dict | None = None) -> dict:
+                 technicals: dict | None = None, divergence: dict | None = None,
+                 quotes: dict | None = None) -> dict:
     """Assemble the full daily outlook from the day's rule-based predictions and
-    AI-analyst calls, plus the per-sector technical snapshot and US-link label. Pure."""
+    AI-analyst calls, plus the per-sector technical snapshot, US-link label, and
+    (when available) the picked name's latest quote. Pure."""
     from .analysis.divergence import summary_line
 
     preds = {p["sector"]: p for p in predictions}
     calls = {c["sector"]: c for c in llm_calls}
     techs = technicals or {}
     divg = divergence or {}
+    quotes = quotes or {}
     merged = []
     for sector in CHINA_SECTORS:
         m = merge_sector(sector, preds.get(sector), calls.get(sector))
@@ -159,6 +162,8 @@ def build_report(trade_date: str, predictions: list[dict], llm_calls: list[dict]
             t = techs.get(sector) or {}
             m["tech"] = t.get("technical_note")
             m["us_link"] = summary_line(divg[sector]) if sector in divg else None
+            if m.get("pick") and m["pick"]["ticker"] in quotes:
+                m["pick"]["quote"] = quotes[m["pick"]["ticker"]]
             merged.append(m)
 
     def _sorted(items):
@@ -191,6 +196,10 @@ def _line(m: dict) -> list[str]:
         trad = f", tradeable {p['tradeable']}" if p.get("tradeable") else ""
         note = f" — {p['note']}" if p.get("note") else ""
         out.append(f"  - name to watch: {p.get('name', p['ticker'])} ({p['ticker']}{trad}){note}")
+        q = p.get("quote")
+        if q and q.get("price") is not None:
+            chg = f" ({q['pct_change']:+.2f}%)" if q.get("pct_change") is not None else ""
+            out.append(f"    latest: {q['price']}{chg} (snapshot)")
     if m.get("tech"):
         out.append(f"  - technicals: {m['tech']}")
     if m.get("us_link"):
@@ -295,7 +304,23 @@ def run_report(trade_date: str | None = None, db_path=None) -> dict:
         divg = classify_sectors(end=trade_date, db_path=db_path)
     except Exception:
         divg = {}
-    return build_report(trade_date, preds, calls, us_rows, technicals=techs, divergence=divg)
+    # Near-real-time quote for each picked name (fail-soft; off unless configured).
+    quotes = {}
+    try:
+        from .ingestion.quotes import fetch_quotes
+        import json as _json
+        tickers = []
+        for c in calls:
+            tp = c.get("top_pick")
+            tp = _json.loads(tp) if isinstance(tp, str) else tp
+            if isinstance(tp, dict) and tp.get("ticker"):
+                tickers.append(tp["ticker"])
+        if tickers:
+            quotes = fetch_quotes(tickers)
+    except Exception:
+        quotes = {}
+    return build_report(trade_date, preds, calls, us_rows, technicals=techs,
+                        divergence=divg, quotes=quotes)
 
 
 def main(argv: list[str]) -> int:
