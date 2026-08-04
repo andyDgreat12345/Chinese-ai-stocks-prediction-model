@@ -118,13 +118,19 @@ def get_rows_for_date(table: str, trade_date: str, db_path=None) -> list[dict]:
 
 
 def close_series(table: str, sector: str | None = None, symbol: str | None = None,
-                 limit: int = 120, end: str | None = None, db_path=None) -> list[dict]:
+                 limit: int = 120, end: str | None = None, before: str | None = None,
+                 db_path=None) -> list[dict]:
     """Chronological (oldest→newest) close history for ONE instrument, for
     technical-indicator computation. Rows: {trade_date, close, pct_change}.
 
     Filter by ``symbol`` (preferred — a sector tag can cover several symbols at
     very different price scales, which would corrupt the series) or by ``sector``.
-    ``end`` caps to on-or-before that date so a backtest replays only past data."""
+    ``end`` caps to on-or-before that date; ``before`` caps to STRICTLY before it.
+
+    Use ``before`` for anything feeding a prediction *about* that date. In a
+    backtest the target day's close is already in the DB, so ``end=date`` would
+    hand the model the answer — a lookahead bug that silently inflates every
+    accuracy number downstream."""
     if table not in ("us_close", "china_close"):
         raise ValueError(f"unexpected table: {table}")
     if not symbol and not sector:
@@ -138,6 +144,8 @@ def close_series(table: str, sector: str | None = None, symbol: str | None = Non
             conds.append("sector = ?"); params.append(sector)
         if end:
             conds.append("trade_date <= ?"); params.append(end)
+        if before:
+            conds.append("trade_date < ?"); params.append(before)
         rows = conn.execute(
             f"""SELECT trade_date, close, pct_change FROM {table}
                 WHERE {' AND '.join(conds)}
@@ -344,6 +352,95 @@ def latest_llm_calls(db_path=None) -> list[dict]:
             "SELECT * FROM llm_calls WHERE trade_date = ? ORDER BY sector", (latest["d"],)
         )
         return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+GLOBAL_PARAMS = "*"
+
+
+def get_model_params(sector: str | None = None, db_path=None) -> dict:
+    """Learned parameters for a sector: {us_spillover, sentiment, macro, threshold}.
+
+    Falls back sector → global ('*') → the scoring module's defaults, so a fresh
+    DB and an un-tuned sector both behave exactly as before any learning ran."""
+    import json as _json
+
+    from .analysis.scoring import BULLISH_THRESHOLD, DEFAULT_WEIGHTS
+
+    base = {**DEFAULT_WEIGHTS, "threshold": BULLISH_THRESHOLD}
+    conn = connect(db_path)
+    try:
+        keys = [GLOBAL_PARAMS] if not sector else [GLOBAL_PARAMS, sector]
+        for key in keys:                      # global first, sector overrides it
+            row = conn.execute(
+                "SELECT params FROM model_params WHERE sector = ?", (key,)).fetchone()
+            if row:
+                try:
+                    base.update(_json.loads(row["params"]) or {})
+                except (ValueError, TypeError):
+                    pass
+        return base
+    finally:
+        conn.close()
+
+
+def set_model_params(sector: str, params: dict, updated_at: str, db_path=None) -> None:
+    import json as _json
+
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO model_params (sector, params, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(sector) DO UPDATE SET
+                   params=excluded.params, updated_at=excluded.updated_at""",
+            (sector, _json.dumps(params), updated_at))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def all_model_params(db_path=None) -> dict[str, dict]:
+    import json as _json
+
+    conn = connect(db_path)
+    try:
+        out = {}
+        for r in conn.execute("SELECT sector, params, updated_at FROM model_params"):
+            try:
+                out[r["sector"]] = {**_json.loads(r["params"]),
+                                    "updated_at": r["updated_at"]}
+            except (ValueError, TypeError):
+                continue
+        return out
+    finally:
+        conn.close()
+
+
+def record_learning(row: dict, db_path=None) -> None:
+    """Append one tuning attempt (adopted or refused) to the learning ledger."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO learning_log
+                   (run_date, sector, params_before, params_after, score_before,
+                    score_after, hit_before, hit_after, n_holdout, adopted, reason,
+                    created_at)
+               VALUES (:run_date, :sector, :params_before, :params_after,
+                       :score_before, :score_after, :hit_before, :hit_after,
+                       :n_holdout, :adopted, :reason, :created_at)""", row)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def learning_history(limit: int = 100, db_path=None) -> list[dict]:
+    """Most-recent-first tuning attempts — the auditable learning curve."""
+    conn = connect(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM learning_log ORDER BY id DESC LIMIT ?", (limit,))]
     finally:
         conn.close()
 

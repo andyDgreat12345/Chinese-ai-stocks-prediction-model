@@ -79,6 +79,36 @@ def momentum(vals: list[float], n: int = 10) -> float | None:
     return round((vals[-1] / vals[-n - 1] - 1) * 100, 2)
 
 
+def technical_signals(ind: dict) -> dict:
+    """Turn an indicator snapshot into normalized −1..+1 model signals the scorer
+    can weight. Pure.
+
+    Deliberately encodes three *different* hypotheses so the learner can discover
+    which (if any) pays in this market, rather than us assuming:
+      * ``rsi_signal`` — MEAN REVERSION: oversold (low RSI) reads bullish.
+      * ``momentum_signal`` — TREND FOLLOWING: recent gains read bullish. This is
+        the opposite bet to the RSI term, on purpose.
+      * ``trend_signal`` — position relative to the moving averages.
+    A signal is 0.0 when its indicator isn't computable yet, so short history
+    contributes nothing rather than a fabricated reading."""
+    out = {"rsi_signal": 0.0, "momentum_signal": 0.0, "trend_signal": 0.0}
+    rsi_v = ind.get("rsi")
+    if rsi_v is not None:
+        out["rsi_signal"] = max(-1.0, min(1.0, (50.0 - rsi_v) / 30.0))
+    mom = ind.get("momentum_10d")
+    if mom is not None:
+        out["momentum_signal"] = max(-1.0, min(1.0, mom / 8.0))
+    trend = ind.get("trend")
+    out["trend_signal"] = {"uptrend": 1.0, "above 20d": 0.5,
+                           "below 20d": -0.5, "downtrend": -1.0}.get(trend, 0.0)
+    return {k: round(v, 4) for k, v in out.items()}
+
+
+def signals_from_closes(closes: list[float]) -> dict:
+    """Convenience: indicator snapshot → model signals, in one step."""
+    return technical_signals(compute_indicators(closes))
+
+
 def compute_indicators(closes: list[float]) -> dict:
     """Full technical snapshot + human-readable state for one instrument."""
     n = len(closes)

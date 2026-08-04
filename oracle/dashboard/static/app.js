@@ -115,6 +115,53 @@ const PANELS = [
     },
   },
   {
+    id: "learning", title: "Self-Improvement (learning)", wide: true,
+    async render(body) {
+      const d = await getJSON("learning");
+      const pct = (v) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
+      body.innerHTML = "";
+      body.appendChild(el("div", "dim",
+        `${d.n_adopted} of ${d.n_attempts} tuning attempts improved on a ` +
+        `${d.holdout_days}-day holdout the search never saw` +
+        (d.enabled ? "" : " · learning DISABLED")));
+
+      const params = d.params || {};
+      if (Object.keys(params).length) {
+        const t = el("table");
+        t.innerHTML = "<tr><th>sector</th><th class='num'>us</th><th class='num'>sent</th>" +
+          "<th class='num'>rsi</th><th class='num'>mom</th><th class='num'>trend</th>" +
+          "<th class='num'>thresh</th></tr>";
+        for (const [s, p] of Object.entries(params).sort()) {
+          const f = (k) => Number(p[k] || 0).toFixed(2);
+          t.insertAdjacentHTML("beforeend",
+            `<tr><td>${esc(s)}</td><td class="num">${f("us_spillover")}</td>
+               <td class="num">${f("sentiment")}</td><td class="num">${f("rsi_signal")}</td>
+               <td class="num">${f("momentum_signal")}</td><td class="num">${f("trend_signal")}</td>
+               <td class="num">${Number(p.threshold || 0).toFixed(3)}</td></tr>`);
+        }
+        body.appendChild(t);
+      } else {
+        body.appendChild(el("div", "empty", "No parameters tuned yet — running on the hand-set defaults."));
+      }
+
+      for (const h of (d.history || []).slice(0, 8)) {
+        const up = h.hit_after != null && h.hit_before != null && h.hit_after > h.hit_before;
+        const cls = h.adopted ? "pos" : "dim";
+        const row = el("div", "pred");
+        row.innerHTML =
+          `<div class="pred-top">
+             <span class="sector">${esc(h.sector)}</span>
+             <span class="${cls}">${h.adopted ? "✓ adopted" : "· kept"}</span>
+             <span class="repdir ${up ? "pos" : "dim"}">holdout ${pct(h.hit_before)} → ${pct(h.hit_after)}</span>
+           </div>
+           <div class="rationale">${esc(h.run_date)} · n=${h.n_holdout} · ${esc(h.reason)}</div>`;
+        body.appendChild(row);
+      }
+      body.appendChild(el("div", "rationale",
+        "A change is adopted only when it beats the incumbent out-of-sample — most runs correctly refuse."));
+    },
+  },
+  {
     id: "llm-usage", title: "AI Research Spend",
     async render(body) {
       const d = await getJSON("llm-usage");

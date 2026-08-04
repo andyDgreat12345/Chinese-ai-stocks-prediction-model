@@ -23,6 +23,7 @@ ENDPOINTS = {
     "report": server.report,
     "llm-calls": server.llm_calls,
     "llm-usage": server.llm_usage,
+    "learning": server.learning,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

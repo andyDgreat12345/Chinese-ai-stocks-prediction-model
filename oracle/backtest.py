@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import math
 import sys
+from dataclasses import replace
 from math import comb
 
-from . import db
+from . import config, db
+from .analysis import technicals
 from .analysis.pipeline import CHINA_SECTORS, build_signals
 from .analysis.scoring import score_sector
 from .reflection.scoring import actual_sector_move
@@ -49,10 +51,36 @@ def _dates_with_actuals(db_path) -> list[str]:
         conn.close()
 
 
+def _sector_close_history(db_path) -> dict[str, list[tuple[str, float]]]:
+    """Per-sector (date, close) series for the canonical sector ETF, loaded once
+    so the replay can compute technicals without a query per day."""
+    out: dict[str, list[tuple[str, float]]] = {}
+    for sector, symbol in config.CHINA_SECTOR_ETFS.items():
+        rows = db.close_series("china_close", symbol=symbol, limit=100000,
+                               db_path=db_path)
+        out[sector] = [(r["trade_date"], r["close"]) for r in rows
+                       if r["close"] is not None]
+    return out
+
+
+def _technicals_before(history: list[tuple[str, float]], date: str,
+                       window: int = 120) -> dict:
+    """Technical signals from closes STRICTLY BEFORE `date` — never the target
+    day's own close, which in a replay is already in the DB (lookahead)."""
+    from bisect import bisect_left
+
+    idx = bisect_left(history, (date,))          # first row on/after `date`
+    closes = [c for _d, c in history[max(0, idx - window):idx]]
+    if len(closes) < 2:
+        return {"rsi_signal": 0.0, "momentum_signal": 0.0, "trend_signal": 0.0}
+    return technicals.signals_from_closes(closes)
+
+
 def collect_records(start=None, end=None, db_path=None) -> list[dict]:
     """Replay the model over every historical date that has an actual China
     close. Returns one record per (date, sector) that could be scored."""
     weights = db.get_weights(db_path)
+    history = _sector_close_history(db_path)
     records: list[dict] = []
     for d in _dates_with_actuals(db_path):
         if start and d < start:
@@ -68,14 +96,29 @@ def collect_records(start=None, end=None, db_path=None) -> list[dict]:
             move = actual_sector_move(china_rows, sector)
             if move is None:
                 continue
-            sig = signals[sector]
-            pred = score_sector(sig, weights)
+            # Attach the sector's own technical state, computed only from closes
+            # BEFORE this date (no lookahead).
+            tech = _technicals_before(history.get(sector, []), d)
+            sig = replace(signals[sector], **tech)
+            # Replay with the sector's LEARNED parameters so the backtest scores
+            # exactly what production would have predicted (falls back to the
+            # defaults when nothing has been tuned).
+            p = db.get_model_params(sector, db_path)
+            pred = score_sector(sig, p, p.get("threshold"))
             records.append({
                 "date": d, "sector": sector,
                 "actual_dir": direction_from_move(move),
                 "actual_move": round(move, 4),
                 "model_dir": pred.direction, "model_conf": pred.confidence,
+                # Full signal vector — lets the walk-forward tuner re-score these
+                # same days under different parameters without re-reading the DB.
                 "us_spillover": sig.us_spillover,
+                "sentiment": sig.sentiment,
+                "macro": sig.macro,
+                "macro_flag": sig.macro_flag,
+                "rsi_signal": sig.rsi_signal,
+                "momentum_signal": sig.momentum_signal,
+                "trend_signal": sig.trend_signal,
             })
     _add_persistence(records)
     _add_llm_calls(records, db_path)
