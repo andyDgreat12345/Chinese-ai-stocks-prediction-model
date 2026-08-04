@@ -48,6 +48,15 @@ def test_prediction_has_disclaimer_and_signals(client):
     assert "us_spillover" in semis["signals"]       # component signals exposed
 
 
+def test_report_buckets_and_disclaimer(client):
+    body = client.get("/api/report").json()
+    assert body["disclaimer"]
+    assert body["trade_date"] == "2026-08-02"
+    assert all(k in body for k in ("consider", "avoid", "watch"))
+    # strong positive US semis spillover + chip sentiment -> semis leans constructive
+    assert "semis" in {m["sector"] for m in body["consider"]}
+
+
 def test_heatmap_cells(client):
     cells = client.get("/api/heatmap").json()["cells"]
     assert {c["sector"] for c in cells} >= {"semis", "energy", "broad"}

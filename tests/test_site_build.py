@@ -29,11 +29,19 @@ def test_site_build_writes_snapshots_and_relative_index(monkeypatch, tmp_path):
     out = build(tmp_path / "site")
 
     # JSON snapshots for every endpoint
-    for name in ("prediction", "heatmap", "accuracy", "leaderboard", "weights",
-                 "reflections", "markets", "history", "news-impact", "health"):
+    for name in ("prediction", "report", "heatmap", "accuracy", "leaderboard",
+                 "weights", "reflections", "markets", "history", "news-impact",
+                 "health"):
         assert (out / "api" / f"{name}.json").exists(), name
     pred = json.loads((out / "api" / "prediction.json").read_text())
     assert len(pred["predictions"]) == 5
+
+    # the daily action report snapshot is present and bucketed
+    rep = json.loads((out / "api" / "report.json").read_text())
+    assert rep["trade_date"] == "2026-08-02"
+    assert all(k in rep for k in ("consider", "avoid", "watch"))
+    # semis had a strong positive US spillover + chip sentiment -> constructive
+    assert "semis" in {m["sector"] for m in rep["consider"]}
 
     # static-mode flag + relative asset paths (works under the Pages subpath)
     assert "window.CMO_STATIC = true" in (out / "static" / "config.js").read_text()
