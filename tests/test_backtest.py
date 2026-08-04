@@ -85,6 +85,35 @@ def test_run_backtest_end_to_end(monkeypatch):
     assert "backtest" in bt.format_report(report)
 
 
+def test_llm_strategy_scored_only_on_recorded_calls(monkeypatch):
+    tmp = tempfile.mktemp(suffix=".db")
+    monkeypatch.setattr(config, "DB_PATH", tmp)
+    _seed_days(tmp)
+    # Record one AI-analyst call, on 2026-08-02 semis (actual there is bearish).
+    db.upsert_llm_call({
+        "trade_date": "2026-08-02", "sector": "semis", "provider": "deepseek",
+        "model": "deepseek-chat", "direction": "bearish", "conviction": "high",
+        "tradeable_etf": "KWEB", "key_drivers": "[]", "rationale": "r",
+        "created_at": "t"}, db_path=tmp)
+
+    report = bt.run_backtest(db_path=tmp)
+    llm = report["strategies"].get("llm (recorded)")
+    assert llm is not None                 # strategy appears because a call exists
+    assert llm["bets"] == 1                # scored only on the one recorded call
+    assert llm["bet_accuracy"] == 1.0      # bearish call, bearish actual
+    # and it shows up in the rendered report + cost-aware section
+    text = bt.format_report(report)
+    assert "llm (recorded)" in text
+
+
+def test_no_llm_strategy_without_calls(monkeypatch):
+    tmp = tempfile.mktemp(suffix=".db")
+    monkeypatch.setattr(config, "DB_PATH", tmp)
+    _seed_days(tmp)
+    report = bt.run_backtest(db_path=tmp)
+    assert "llm (recorded)" not in report["strategies"]   # no noise row when absent
+
+
 def test_collect_records_skips_sectors_without_actuals(monkeypatch):
     tmp = tempfile.mktemp(suffix=".db")
     monkeypatch.setattr(config, "DB_PATH", tmp)

@@ -32,7 +32,14 @@ import sys
 from dataclasses import dataclass
 
 from . import config, db
-from .backtest import STRATEGIES, annualized_sharpe, collect_records
+from .backtest import (
+    LLM_STRATEGY,
+    STRATEGIES,
+    _dir_llm,
+    annualized_sharpe,
+    collect_records,
+    has_llm_calls,
+)
 
 # 1 basis point = 0.01 percentage point. Moves in the records are in percent
 # (1.5 == +1.5%), so bps → percent is a ×0.01 scale.
@@ -170,13 +177,16 @@ _COST_STRATEGIES = ("model", "baseline: US-direction")
 def run_cost_backtest(start=None, end=None, db_path=None,
                       costs=TradingCosts(), sizing=Sizing()) -> dict:
     records = collect_records(start, end, db_path)
+    strat_fns = {name: STRATEGIES[name] for name in _COST_STRATEGIES}
+    if has_llm_calls(records):        # add the recorded AI analyst when present
+        strat_fns[LLM_STRATEGY] = _dir_llm
     return {
         "costs": {"commission_bps": costs.commission_bps,
                   "slippage_bps": costs.slippage_bps,
                   "round_trip_bps": round(costs.round_trip_pct / _BPS_TO_PCT, 1)},
         "gross_exposure": sizing.gross_exposure,
-        "strategies": {name: simulate(records, STRATEGIES[name], costs, sizing)
-                       for name in _COST_STRATEGIES},
+        "strategies": {name: simulate(records, fn, costs, sizing)
+                       for name, fn in strat_fns.items()},
     }
 
 

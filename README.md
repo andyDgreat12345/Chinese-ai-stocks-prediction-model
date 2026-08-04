@@ -154,11 +154,15 @@ drivers, and the foreign-tradeable ETF (ASHR/KWEB/…) each call maps to.
   On GitHub Actions, set repo **variable** `ORACLE_ANALYST_PROVIDER` + the
   matching key **secret** — the daily `morning` phase then runs it automatically.
 
-- **Recorded separately, never silently trusted.** The LLM's calls land in their
-  own `llm_calls` table alongside the rule-based `predictions` — so the backtest
-  can measure the analyst's edge against the rule-based model and the naive
-  baselines *before* any real money. A confident LLM pick is a hypothesis to be
-  scored, not a fact.
+- **Recorded separately and scored.** The LLM's calls land in their own
+  `llm_calls` table alongside the rule-based `predictions`, and the backtest
+  grades them as a distinct strategy — `llm (recorded)` — against the rule-based
+  model and the naive baselines, in both the gross table and the cost-aware
+  (net/Sharpe/drawdown/break-even) section. It's scored **only on the dates it
+  actually called** (a forward, out-of-sample read — the LLM isn't replayed over
+  history), so treat it as signal only once its bet count is large enough for the
+  p-value to mean anything. A confident LLM pick is a hypothesis to be scored,
+  not a fact.
 - **Fail-soft + honest.** Any error or refusal leaves the rule-based prediction
   as the sole record. Output is a probabilistic signal with the standard
   disclaimer — not a buy/sell instruction, never auto-executed. (Note: DeepSeek's
