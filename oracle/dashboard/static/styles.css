@@ -157,6 +157,15 @@ tr:last-child td { border-bottom: none; }
 .chart .cone-mid.bearish { stroke: var(--red); }
 .chart .cone-mid.neutral { stroke: var(--amber); }
 
+/* ── paired US/China lead-lag chart ──────────────────────── */
+.pairchart { height: 130px; }
+.chart .usline { fill: none; stroke: var(--amber); stroke-width: 1.4; }
+.chart .cnline { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
+.chart .zeroline { stroke: var(--border-hot); stroke-width: 1; stroke-dasharray: 2 4; }
+.usline-key { color: var(--amber); }
+.cnline-key { color: var(--cyan); }
+.rationale.warn { color: var(--amber); }
+
 /* ── heatmap ─────────────────────────────────────────────── */
 .heatmap { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .cell {
