@@ -11,6 +11,7 @@ Two products, both recomputed daily as new data lands:
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import datetime, timezone
 
 from .. import config, db
@@ -136,6 +137,12 @@ for _sector, _cats in SECTOR_NEWS_CATEGORIES.items():
         _CATEGORY_TO_SECTORS.setdefault(_c, []).append(_sector)
 
 
+def _next_session(sessions: list[str], after: str) -> str | None:
+    """First China trading session strictly after `after`, or None."""
+    i = bisect_right(sessions, after)
+    return sessions[i] if i < len(sessions) else None
+
+
 def compute_news_impact(
     news_by_date: dict[str, set[str]],
     china_moves_by_date: dict[str, dict[str, float]],
@@ -143,11 +150,25 @@ def compute_news_impact(
     """Pure core: given {date: {categories}} and {date: {sector: move}}, return
     per (category, china_sector) rows of avg move, variance, and sample size.
 
-    Same-day association: overnight news (fetched ~04:30) is mapped to that
-    session's China close move for the sectors the category bears on."""
+    **News on date D is mapped to the NEXT China session, not the same one.**
+    This used to be a same-day join, justified by a comment saying news is
+    "fetched ~04:30" and so belongs to that morning's session. The cron says
+    otherwise: the morning job fires at 21:00 UTC, which is 05:00 CST the
+    *following* day, and `fetch_world_news` stamps trade_date with the UTC date
+    at fetch time. So headlines stamped D are gathered ~14h AFTER china_close[D]
+    has already printed. Joining them same-day measured news against a move that
+    was already history — the predictor postdated the outcome.
+
+    Mapping D to the next session is both honest and the only tradeable reading:
+    it leaves ~4.5h before the 09:30 CST open.
+    """
+    sessions = sorted(china_moves_by_date)
     buckets: dict[tuple[str, str], list[float]] = {}
     for date, categories in news_by_date.items():
-        moves = china_moves_by_date.get(date, {})
+        nxt = _next_session(sessions, date)
+        if nxt is None:
+            continue          # no session has traded since this news yet
+        moves = china_moves_by_date.get(nxt, {})
         for category in categories:
             for sector in _CATEGORY_TO_SECTORS.get(category, []):
                 if sector in moves:

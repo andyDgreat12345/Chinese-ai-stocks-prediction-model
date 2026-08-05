@@ -69,12 +69,32 @@ def test_score_predictions_marks_correct(monkeypatch):
 # ── (ii) news impact ───────────────────────────────────────────────────────
 def test_compute_news_impact_aggregates_by_category_sector():
     news_by_date = {"d1": {"chip_export"}, "d2": {"chip_export"}}
-    china_moves = {"d1": {"semis": 2.0}, "d2": {"semis": 1.0}}
+    china_moves = {"d1": {"semis": 2.0}, "d2": {"semis": 1.0}, "d3": {"semis": 3.0}}
     rows = compute_news_impact(news_by_date, china_moves)
     semis = next(r for r in rows if r["china_sector"] == "semis")
     assert semis["category"] == "chip_export"
-    assert semis["avg_move"] == 1.5
+    # d1 news -> d2 move (1.0); d2 news -> d3 move (3.0). Never the same day.
+    assert semis["avg_move"] == 2.0
     assert semis["sample_size"] == 2
+
+
+def test_news_impact_never_reads_the_same_session():
+    """Regression: this was a same-day join. The morning job fires at 21:00 UTC
+    (05:00 CST the NEXT day) and stamps trade_date with the UTC date, so news
+    stamped D is gathered ~14h after china_close[D] has already printed —
+    joining them same-day scored news against a move that was already history."""
+    rows = compute_news_impact({"d1": {"chip_export"}}, {"d1": {"semis": 9.9}})
+    # The only session available is the same day, so there is nothing to learn.
+    assert rows == []
+
+
+def test_news_impact_skips_to_the_next_trading_session_over_a_gap():
+    """Weekends/holidays: the next session may be several calendar days later."""
+    rows = compute_news_impact({"2026-08-07": {"chip_export"}},
+                               {"2026-08-07": {"semis": 1.0},
+                                "2026-08-10": {"semis": 4.0}})
+    semis = next(r for r in rows if r["china_sector"] == "semis")
+    assert semis["avg_move"] == 4.0      # Friday news -> Monday session
 
 
 # ── (iii) reflection ───────────────────────────────────────────────────────
