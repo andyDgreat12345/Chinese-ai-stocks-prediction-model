@@ -76,18 +76,55 @@ def _technicals_before(history: list[tuple[str, float]], date: str,
     return technicals.signals_from_closes(closes)
 
 
+def _us_rows_by_date(db_path) -> tuple[dict[str, list[dict]], list[str]]:
+    """All us_close rows grouped by date, plus the sorted date list — loaded once
+    so the replay can look up the *prior* US session without a query per day."""
+    conn = db.connect(db_path)
+    try:
+        by_date: dict[str, list[dict]] = {}
+        for r in conn.execute("SELECT * FROM us_close ORDER BY trade_date"):
+            by_date.setdefault(r["trade_date"], []).append(dict(r))
+        return by_date, sorted(by_date)
+    finally:
+        conn.close()
+
+
+def _prior_us_rows(by_date: dict, us_dates: list[str], china_date: str) -> list[dict]:
+    """The most recent US session STRICTLY BEFORE the China session being
+    predicted.
+
+    This is the lookahead fix. China closes 07:00 UTC; the US closes 21:00 UTC
+    the *same* calendar date — about 14 hours later. Pairing us_close[d] with
+    china_close[d], as this replay used to, fed the model a US bar that had not
+    happened yet when China closed, inflating every number downstream (backtest,
+    learning loop, simulator). The tradeable relationship is us_close[d-1] →
+    china_close[d], which is what the live 05:00 CST job actually has available.
+    """
+    from bisect import bisect_left
+
+    i = bisect_left(us_dates, china_date)      # first US date >= china_date
+    if i == 0:
+        return []                               # no prior US session on record
+    return by_date.get(us_dates[i - 1], [])
+
+
 def collect_records(start=None, end=None, db_path=None) -> list[dict]:
     """Replay the model over every historical date that has an actual China
-    close. Returns one record per (date, sector) that could be scored."""
+    close. Returns one record per (date, sector) that could be scored.
+
+    Every input is restricted to information available BEFORE the China session
+    being predicted: the prior US close, technicals from prior China closes."""
     weights = db.get_weights(db_path)
     history = _sector_close_history(db_path)
+    us_by_date, us_dates = _us_rows_by_date(db_path)
     records: list[dict] = []
     for d in _dates_with_actuals(db_path):
         if start and d < start:
             continue
         if end and d > end:
             continue
-        us_rows = db.get_rows_for_date("us_close", d, db_path)
+        # PRIOR US session — never the same date (see _prior_us_rows).
+        us_rows = _prior_us_rows(us_by_date, us_dates, d)
         news_rows = db.get_rows_for_date("news", d, db_path)
         macro = db.macro_event_dates(d, db_path)
         china_rows = db.get_rows_for_date("china_close", d, db_path)

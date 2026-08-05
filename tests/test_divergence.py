@@ -41,9 +41,11 @@ def test_classify_sectors_over_history(monkeypatch):
     tmp = tempfile.mktemp(suffix=".db")
     monkeypatch.setattr(config, "DB_PATH", tmp)
     db.init_db(tmp)
-    # semis: US SOXX up ⇒ China semis up the same day (a "follows" relationship).
-    days = [("2026-08-01", 2.0, 2.2), ("2026-08-02", -1.5, -1.4),
-            ("2026-08-03", 1.0, 1.1), ("2026-08-04", -0.8, -0.9)]
+    # semis FOLLOWS the US with a one-session lag: China on day d moves the way
+    # the US moved on d-1 (same-day pairing would be lookahead).
+    days = [("2026-08-01", 2.0, 0.1), ("2026-08-02", -1.5, 2.2),
+            ("2026-08-03", 1.0, -1.4), ("2026-08-04", -0.8, 1.1),
+            ("2026-08-05", 1.2, -0.9)]
     for d, us_pct, cn_pct in days:
         db.upsert_market_close("us_close", [
             {"trade_date": d, "symbol": "SOXX", "sector": "semis",
@@ -53,4 +55,4 @@ def test_classify_sectors_over_history(monkeypatch):
              "close": 1.0, "pct_change": cn_pct, "fetched_at": "t"}], db_path=tmp)
     out = dv.classify_sectors(db_path=tmp)
     assert out["semis"]["label"] == "follows US"
-    assert out["semis"]["n"] == 4
+    assert out["semis"]["n"] == 5

@@ -170,6 +170,48 @@ def charts(days: int = 90) -> dict:
     return {"disclaimer": config.DISCLAIMER, "days": days, "sectors": out}
 
 
+@app.get("/api/simulation")
+def simulation() -> dict:
+    """Paper-trading simulation of the system's own historical calls, run through
+    human trader discipline (conviction floor, risk sizing, stops, position and
+    holding limits) and benchmarked against buy-and-hold.
+
+    Inputs are lookahead-free — each session is decided from the prior US close
+    and prior China closes only."""
+    from ..simulator import engine as sim
+    from ..simulator.run import load_inputs
+    from ..simulator.trader import TraderRules
+
+    db.init_db()
+    try:
+        calls, bars, dates = load_inputs()
+        if not dates:
+            return {"disclaimer": config.DISCLAIMER, "available": False,
+                    "reason": "no historical calls yet — run the backfill"}
+        rules = TraderRules()
+        r = sim.simulate(calls, bars, dates, rules)
+    except Exception as exc:  # noqa: BLE001 — a panel must never break the site
+        return {"disclaimer": config.DISCLAIMER, "available": False,
+                "reason": str(exc)}
+    # Trim the payload: the curve is charted, individual trades are not.
+    curve = r["equity_curve"]
+    step = max(1, len(curve) // 240)          # cap the points we ship
+    return {
+        "disclaimer": config.DISCLAIMER, "available": True,
+        "rules": r["rules"], "sessions": r["sessions"], "n_trades": r["n_trades"],
+        "win_rate": r["win_rate"], "avg_win_pct": r["avg_win_pct"],
+        "avg_loss_pct": r["avg_loss_pct"], "profit_factor": r["profit_factor"],
+        "max_drawdown_pct": r["max_drawdown_pct"],
+        "starting_cash": r["starting_cash"], "final_equity": r["final_equity"],
+        "return_pct": r["return_pct"],
+        "buy_and_hold_return_pct": r["buy_and_hold_return_pct"],
+        "beat_buy_and_hold": r["beat_buy_and_hold"],
+        "exit_reasons": r["exit_reasons"],
+        "equity_curve": curve[::step],
+        "recent_trades": r["trades"][-12:],
+    }
+
+
 @app.get("/api/proven-hubs")
 def proven_hubs(days: int = 90, limit: int = 6) -> dict:
     """Sweep-proven pairs grouped into HUBS — one US symbol with every China
