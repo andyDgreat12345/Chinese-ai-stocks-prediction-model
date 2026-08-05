@@ -157,3 +157,40 @@ def test_every_symbol_has_a_stated_hypothesis():
 def test_controls_are_flagged():
     assert uni.is_control("EEM") and uni.is_control("EFA")
     assert not uni.is_control("FXI")
+
+
+# ── regression: the research backfill must not break the prediction pipeline ──
+def test_research_backfill_preserves_pipeline_sector_tags(monkeypatch, tmp_path):
+    """The research universe reuses symbols the daily pipeline depends on
+    (^GSPC, SOXX, XLE...). build_signals maps China sectors onto US tags like
+    'semis'/'energy'; if the research backfill relabels them with its own group
+    names ('us_sector'), every spillover signal silently becomes 0 and every
+    daily call goes neutral. It happened — this locks it shut."""
+    from oracle import config, db
+    from oracle.ingestion.us_market import SECTOR_TAGS
+    from oracle.research import run as rr
+
+    dbp = tmp_path / "s.db"
+    monkeypatch.setattr(config, "DB_PATH", dbp)
+    db.init_db(dbp)
+
+    monkeypatch.setattr(rr, "backfill_research_universe",
+                        rr.backfill_research_universe)   # keep the real one
+    # stub the network: one bar per symbol
+    import oracle.backfill as bf
+    monkeypatch.setattr(bf, "_download_us", lambda sym, days: object())
+    monkeypatch.setattr(bf, "_us_records", lambda df: [
+        {"date": "2026-08-03", "close": 100.0, "open": 99.0, "high": 101.0, "low": 98.0},
+        {"date": "2026-08-04", "close": 102.0, "open": 100.0, "high": 103.0, "low": 99.0}])
+
+    rr.backfill_research_universe(days=5)
+
+    conn = db.connect(dbp)
+    stored = {r["symbol"]: r["sector"] for r in
+              conn.execute("SELECT DISTINCT symbol, sector FROM us_close")}
+    conn.close()
+    for sym, expected in SECTOR_TAGS.items():
+        if sym in stored:
+            assert stored[sym] == expected, (
+                f"{sym} was relabelled {stored[sym]!r}, breaking the pipeline "
+                f"mapping which needs {expected!r}")
