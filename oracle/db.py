@@ -32,6 +32,9 @@ def init_db(db_path: Path | str | None = None) -> None:
         conn.executescript(schema)
         # Migrations for restored older state DBs:
         _add_column_if_missing(conn, "llm_calls", "top_pick", "TEXT")  # JSON single-name pick
+        for tbl in ("us_close", "china_close"):        # OHLC for candlesticks
+            for col in ("open", "high", "low"):
+                _add_column_if_missing(conn, tbl, col, "REAL")
         conn.commit()
     finally:
         conn.close()
@@ -47,15 +50,23 @@ def upsert_market_close(table: str, rows: list[dict], db_path=None) -> int:
         raise ValueError(f"unexpected table: {table}")
     if not rows:
         return 0
+    # OHLC is optional — callers that only have a close still work unchanged, and
+    # COALESCE keeps any previously stored OHLC rather than nulling it out.
+    rows = [{"open": None, "high": None, "low": None, **r} for r in rows]
     conn = connect(db_path)
     try:
         conn.executemany(
             f"""INSERT INTO {table}
-                    (trade_date, symbol, sector, close, pct_change, fetched_at)
+                    (trade_date, symbol, sector, close, open, high, low,
+                     pct_change, fetched_at)
                 VALUES
-                    (:trade_date, :symbol, :sector, :close, :pct_change, :fetched_at)
+                    (:trade_date, :symbol, :sector, :close, :open, :high, :low,
+                     :pct_change, :fetched_at)
                 ON CONFLICT(trade_date, symbol) DO UPDATE SET
                     sector=excluded.sector, close=excluded.close,
+                    open=COALESCE(excluded.open, {table}.open),
+                    high=COALESCE(excluded.high, {table}.high),
+                    low=COALESCE(excluded.low, {table}.low),
                     pct_change=excluded.pct_change, fetched_at=excluded.fetched_at""",
             rows,
         )
@@ -147,7 +158,7 @@ def close_series(table: str, sector: str | None = None, symbol: str | None = Non
         if before:
             conds.append("trade_date < ?"); params.append(before)
         rows = conn.execute(
-            f"""SELECT trade_date, close, pct_change FROM {table}
+            f"""SELECT trade_date, close, open, high, low, pct_change FROM {table}
                 WHERE {' AND '.join(conds)}
                 ORDER BY trade_date DESC LIMIT ?""", (*params, limit)).fetchall()
         return [dict(r) for r in reversed(rows)]

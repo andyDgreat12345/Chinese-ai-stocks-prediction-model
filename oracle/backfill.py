@@ -57,6 +57,68 @@ def extract_dated_series(records: list[dict],
     return out
 
 
+_OPEN_KEYS = ("open", "开盘", "Open", "开盘价")
+_HIGH_KEYS = ("high", "最高", "High", "最高价")
+_LOW_KEYS = ("low", "最低", "Low", "最低价")
+
+
+def _first_key(row: dict, keys) -> str | None:
+    return next((k for k in keys if k in row), None)
+
+
+def _num(v):
+    try:
+        return None if v is None else round(float(v), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_dated_ohlc(records: list[dict]) -> list[tuple[str, dict]]:
+    """Ascending [(date, {close, open, high, low})] from row dicts, tolerant of
+    English/Chinese column names. Close is required; O/H/L are optional so a
+    source that only publishes closes still loads (the chart then draws a line
+    instead of candles). Pure."""
+    if not records:
+        return []
+    r0 = records[0]
+    dkey = _first_key(r0, _DATE_KEYS)
+    ckey = _first_key(r0, _CLOSE_KEYS)
+    if dkey is None or ckey is None:
+        return []
+    okey, hkey, lkey = (_first_key(r0, _OPEN_KEYS), _first_key(r0, _HIGH_KEYS),
+                        _first_key(r0, _LOW_KEYS))
+    out = []
+    for r in records:
+        d, c = r.get(dkey), _num(r.get(ckey))
+        if d is None or c is None:
+            continue
+        out.append((str(d)[:10], {
+            "close": c,
+            "open": _num(r.get(okey)) if okey else None,
+            "high": _num(r.get(hkey)) if hkey else None,
+            "low": _num(r.get(lkey)) if lkey else None,
+        }))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def ohlc_to_rows(symbol: str, sector: str | None,
+                 series: list[tuple[str, dict]], fetched_at: str) -> list[dict]:
+    """OHLC series -> DB rows with the daily % change vs the previous close. Pure."""
+    rows, prev = [], None
+    for d, bar in series:
+        c = bar["close"]
+        rows.append({
+            "trade_date": d, "symbol": symbol, "sector": sector,
+            "close": c, "open": bar.get("open"), "high": bar.get("high"),
+            "low": bar.get("low"),
+            "pct_change": round((c / prev - 1.0) * 100.0, 4) if prev else None,
+            "fetched_at": fetched_at,
+        })
+        prev = c
+    return rows
+
+
 def series_to_rows(symbol: str, sector: str | None,
                    series: list[tuple[str, float]], fetched_at: str) -> list[dict]:
     """Turn an ascending [(date, close)] series into close rows with a daily
@@ -87,15 +149,35 @@ def _download_us(symbol: str, days: int):
 
 
 def _us_records(df) -> list[dict]:
-    """yfinance frame -> [{date, close}] records (network-side, not unit-tested)."""
+    """yfinance frame -> [{date, close, open, high, low}] records (network-side,
+    not unit-tested). O/H/L are best-effort: if a column is missing the bar still
+    loads with just its close and the chart falls back to a line."""
+    def col(name):
+        try:
+            c = df[name]
+        except (KeyError, TypeError):
+            return None
+        return c.iloc[:, 0] if hasattr(c, "columns") else c
+
+    close = col("Close")
+    if close is None:
+        return []
+    opens, highs, lows = col("Open"), col("High"), col("Low")
+
+    def at(series, idx):
+        if series is None:
+            return None
+        try:
+            v = float(series.get(idx))
+            return v if v == v else None          # drop NaN
+        except (TypeError, ValueError, AttributeError):
+            return None
+
     try:
-        close = df["Close"]
-        # single-symbol download: a DataFrame column or a Series
-        if hasattr(close, "columns"):
-            close = close.iloc[:, 0]
-        return [{"date": idx.strftime("%Y-%m-%d"), "close": float(v)}
+        return [{"date": idx.strftime("%Y-%m-%d"), "close": float(v),
+                 "open": at(opens, idx), "high": at(highs, idx), "low": at(lows, idx)}
                 for idx, v in close.items() if v == v]
-    except (KeyError, TypeError, AttributeError):
+    except (TypeError, AttributeError):
         return []
 
 
@@ -126,8 +208,8 @@ def backfill_us(days: int = 180) -> int:
     total = 0
     for sym in symbols:
         try:
-            series = _trim_days(extract_dated_series(_us_records(_download_us(sym, days))), days)
-            rows = series_to_rows(sym, US_SECTOR_TAGS.get(sym), series, fetched_at)
+            series = _trim_days(extract_dated_ohlc(_us_records(_download_us(sym, days))), days)
+            rows = ohlc_to_rows(sym, US_SECTOR_TAGS.get(sym), series, fetched_at)
             total += upsert_market_close("us_close", rows)
         except Exception as e:  # noqa: BLE001
             print(f"backfill_us: {sym} failed: {e!r}")
@@ -140,16 +222,16 @@ def backfill_china(days: int = 180) -> int:
     total = 0
     for code, sector in INDEX_SECTOR_TAGS.items():
         try:
-            series = _trim_days(extract_dated_series(_to_records(_download_china_index(code))), days)
+            series = _trim_days(extract_dated_ohlc(_to_records(_download_china_index(code))), days)
             total += upsert_market_close("china_close",
-                                         series_to_rows(code, sector, series, fetched_at))
+                                         ohlc_to_rows(code, sector, series, fetched_at))
         except Exception as e:  # noqa: BLE001
             print(f"backfill_china: index {code} failed: {e!r}")
     for code, sector in ETF_SECTOR_TAGS.items():
         try:
-            series = _trim_days(extract_dated_series(_to_records(_download_china_etf(code))), days)
+            series = _trim_days(extract_dated_ohlc(_to_records(_download_china_etf(code))), days)
             total += upsert_market_close("china_close",
-                                         series_to_rows(code, sector, series, fetched_at))
+                                         ohlc_to_rows(code, sector, series, fetched_at))
         except Exception as e:  # noqa: BLE001
             print(f"backfill_china: ETF {code} failed: {e!r}")
     print(f"backfill_china: wrote {total} rows")

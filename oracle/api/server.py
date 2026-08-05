@@ -123,6 +123,53 @@ def report() -> dict:
     return r
 
 
+@app.get("/api/charts")
+def charts(days: int = 90) -> dict:
+    """Per-sector price bars + indicator lines + the calibrated forecast cone —
+    everything the dashboard's candlestick chart draws.
+
+    ``bars`` carry OHLC when the source provided it (real candlesticks) and just
+    a close otherwise (the chart falls back to a line rather than inventing a
+    bar). ``forecast`` is the empirical distribution of what happened on past days
+    with the same call — measured, never extrapolated."""
+    from ..analysis import technicals as ta
+    from ..analysis.forecast import sector_forecasts
+    from ..analysis.pipeline import CHINA_SECTORS
+
+    db.init_db()          # self-heal: a restored state DB may predate the OHLC columns
+    out: dict[str, dict] = {}
+    for sector in CHINA_SECTORS:
+        symbol = config.CHINA_SECTOR_ETFS.get(sector)
+        if not symbol:
+            continue
+        rows = db.close_series("china_close", symbol=symbol, limit=days)
+        bars = [{"d": r["trade_date"], "o": r.get("open"), "h": r.get("high"),
+                 "l": r.get("low"), "c": r["close"]}
+                for r in rows if r.get("close") is not None]
+        closes = [b["c"] for b in bars]
+        ind = ta.compute_indicators(closes) if len(closes) >= 2 else {}
+        out[sector] = {
+            "symbol": symbol, "bars": bars,
+            "has_ohlc": any(b["o"] is not None and b["h"] is not None for b in bars),
+            "sma20": ind.get("sma20"), "sma50": ind.get("sma50"),
+            "rsi": ind.get("rsi"), "trend": ind.get("trend"),
+            "technical_note": ind.get("technical_note"),
+        }
+
+    # Today's calls + the empirical outcome distribution behind each.
+    preds = {p["sector"]: p["direction"] for p in db.latest_predictions()}
+    try:
+        from ..backtest import collect_records
+        fc = sector_forecasts(collect_records(), preds)
+    except Exception:  # noqa: BLE001 — charts must render even if the replay fails
+        fc = {}
+    for sector, dist in fc.items():
+        if sector in out:
+            out[sector]["forecast"] = dist
+            out[sector]["call"] = preds.get(sector)
+    return {"disclaimer": config.DISCLAIMER, "days": days, "sectors": out}
+
+
 @app.get("/api/learning")
 def learning() -> dict:
     """Self-improvement state (§4b): the per-sector parameters the walk-forward

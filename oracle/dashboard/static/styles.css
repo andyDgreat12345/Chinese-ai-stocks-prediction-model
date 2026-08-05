@@ -137,6 +137,26 @@ tr:last-child td { border-bottom: none; }
 .rep-head.dim { color: var(--dim); }
 .pred-top .repdir { margin-left: auto; font-variant-numeric: tabular-nums; }
 
+/* ── candlestick chart + forecast cone ───────────────────── */
+.chartbox { padding: 8px 0 10px; border-bottom: 1px solid rgba(28,43,51,.5); }
+.chartbox:last-of-type { border-bottom: none; }
+.chart { width: 100%; height: 168px; display: block; margin: 4px 0 2px; }
+.chart .candle.up   { fill: var(--green); stroke: none; }
+.chart .candle.down { fill: var(--red);   stroke: none; }
+.chart .wick { stroke-width: 1; }
+.chart .wick.up   { stroke: var(--green); }
+.chart .wick.down { stroke: var(--red); }
+.chart .priceline { fill: none; stroke: var(--cyan); stroke-width: 1.4; }
+/* The cone is deliberately faint: it is a measured range, not a prediction line. */
+.chart .cone           { opacity: .20; }
+.chart .cone.bullish   { fill: var(--green); }
+.chart .cone.bearish   { fill: var(--red); }
+.chart .cone.neutral   { fill: var(--amber); }
+.chart .cone-mid       { stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .85; }
+.chart .cone-mid.bullish { stroke: var(--green); }
+.chart .cone-mid.bearish { stroke: var(--red); }
+.chart .cone-mid.neutral { stroke: var(--amber); }
+
 /* ── heatmap ─────────────────────────────────────────────── */
 .heatmap { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .cell {

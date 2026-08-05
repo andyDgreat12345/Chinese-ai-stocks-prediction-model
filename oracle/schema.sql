@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS us_close (
     symbol       TEXT NOT NULL,          -- ^GSPC, XLE, GC=F, ...
     sector       TEXT,                   -- logical sector tag (energy/semis/...)
     close        REAL,
+    open         REAL,                   -- OHLC, for candlestick rendering
+    high         REAL,
+    low          REAL,
     pct_change   REAL,                   -- vs prior close
     fetched_at   TEXT NOT NULL,
     PRIMARY KEY (trade_date, symbol)
@@ -20,6 +23,9 @@ CREATE TABLE IF NOT EXISTS china_close (
     symbol       TEXT NOT NULL,          -- index code or ticker
     sector       TEXT,
     close        REAL,
+    open         REAL,                   -- OHLC, for candlestick rendering
+    high         REAL,
+    low          REAL,
     pct_change   REAL,
     fetched_at   TEXT NOT NULL,
     PRIMARY KEY (trade_date, symbol)
