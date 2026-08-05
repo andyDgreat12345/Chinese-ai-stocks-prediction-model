@@ -176,3 +176,51 @@ def test_replay_does_not_use_same_day_us_close(monkeypatch):
              "close": 1.0, "pct_change": 1.0, "fetched_at": "t"}], db_path=tmp)
     recs = {r["date"]: r for r in bt.collect_records(db_path=tmp)}
     assert recs["2026-08-04"]["us_spillover"] == 0.0
+
+
+# ── news lookahead ────────────────────────────────────────────────────────
+def test_prior_news_rows_never_returns_the_same_date():
+    by_date = {"2026-08-01": [{"n": 1}], "2026-08-02": [{"n": 2}]}
+    dates = sorted(by_date)
+    assert bt._prior_news_rows(by_date, dates, "2026-08-02") == [{"n": 1}]
+    assert bt._prior_news_rows(by_date, dates, "2026-08-01") == []   # nothing prior
+    # A gap (weekend/holiday) still resolves to the most recent earlier batch.
+    assert bt._prior_news_rows(by_date, dates, "2026-08-10") == [{"n": 2}]
+
+
+def test_replay_uses_the_prior_news_batch_not_the_same_day(monkeypatch):
+    """Regression: collect_records read news stamped the SAME date as the China
+    session. fetch_world_news stamps trade_date with the UTC date at fetch time
+    and the morning job fires at 21:00 UTC (05:00 CST next day), so news[d] is
+    gathered ~14h after china_close[d] prints — headlines written after the
+    session being predicted."""
+    tmp = tempfile.mktemp(suffix=".db")
+    monkeypatch.setattr(config, "DB_PATH", tmp)
+    _seed_days(tmp)
+    # Strongly bullish chip news stamped on the LAST session. If the replay
+    # reads same-day news it leaks into that day's record; reading the prior
+    # batch it must not appear anywhere, since no session follows it.
+    db.insert_news([{
+        "trade_date": "2026-08-03", "source": "eastmoney_market",
+        "category": "chip_export", "headline": "半导体板块涨停潮",
+        "summary": "", "sentiment": 1.0, "fetched_at": "t"}], db_path=tmp)
+
+    recs = bt.collect_records(db_path=tmp)
+    leaked = [r for r in recs if r["date"] == "2026-08-03" and r["sentiment"]]
+    assert not leaked, "same-day news leaked into the prediction for that session"
+    assert all(r["sentiment"] == 0.0 for r in recs)
+
+
+def test_prior_news_reaches_the_next_session(monkeypatch):
+    """The mirror of the above: news on d IS available to session d+1."""
+    tmp = tempfile.mktemp(suffix=".db")
+    monkeypatch.setattr(config, "DB_PATH", tmp)
+    _seed_days(tmp)
+    db.insert_news([{
+        "trade_date": "2026-08-02", "source": "eastmoney_market",
+        "category": "chip_export", "headline": "半导体板块涨停潮",
+        "summary": "", "sentiment": 1.0, "fetched_at": "t"}], db_path=tmp)
+
+    recs = {r["date"]: r for r in bt.collect_records(db_path=tmp)}
+    assert recs["2026-08-03"]["sentiment"] > 0, "next session must see prior news"
+    assert recs["2026-08-02"]["sentiment"] == 0.0

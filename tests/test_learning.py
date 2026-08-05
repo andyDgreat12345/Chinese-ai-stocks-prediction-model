@@ -128,7 +128,13 @@ def test_tune_refuses_when_no_out_of_sample_gain(monkeypatch):
             for i in range(120)]
     row = at.tune_sector("semis", recs, inc, "2026-08-10", "t", db_path=tmp)
     assert row["adopted"] == 0
-    assert db.all_model_params(tmp) == {}          # nothing written
+    # A refusal must not persist a LEARNED change. The dead-signal pin may still
+    # be written — it is behaviour-preserving (weight x 0 = 0), not a fit.
+    stored = db.all_model_params(tmp).get("semis")
+    if stored is not None:
+        assert stored["us_spillover"] == inc["us_spillover"]
+        assert stored["threshold"] == inc["threshold"]
+        assert stored["sentiment"] == 0.0          # pinned, never fitted
 
 
 def test_tune_adopts_and_persists_when_genuinely_better(monkeypatch):
@@ -220,3 +226,103 @@ def test_cooldown_allows_adoption_once_elapsed(monkeypatch):
     recs = [_rec("2026-08-20")]
     row = at.tune_sector("semis", recs, inc, "2026-08-20", "t", db_path=tmp)  # 19d later
     assert "cooldown" not in row["reason"]        # gate passed (fails later on data)
+
+
+# ── sparse-signal guard ───────────────────────────────────────────────────
+def test_signal_coverage_counts_non_zero_share():
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 9 + \
+           [{"us_spillover": 1.0, "sentiment": 0.5}]
+    cov = wf.signal_coverage(recs)
+    assert cov["us_spillover"] == 1.0
+    assert cov["sentiment"] == 0.1
+
+
+def test_sparse_signal_is_not_weightable():
+    """Regression: news ingestion went live on one day of a 369-day history, so
+    `sentiment` was non-zero on 0.3% of records. 'Varies at all' admitted it as a
+    real parameter, but a weight fitted to a single day acts as a threshold
+    rescale on every other one — the same backdoor `macro` opened."""
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 99 + \
+           [{"us_spillover": 1.0, "sentiment": 0.9}]
+    live = wf.live_signals(recs)
+    assert "us_spillover" in live
+    assert "sentiment" not in live, "1% coverage must not earn a weight"
+
+
+def test_signal_becomes_weightable_once_it_has_history():
+    """The gate must open on its own — no code change the day news matures."""
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 80 + \
+           [{"us_spillover": 1.0, "sentiment": 0.7}] * 20
+    assert "sentiment" in wf.live_signals(recs)
+
+
+def test_pin_dead_signals_zeroes_without_renormalizing():
+    """Renormalizing would scale the surviving weights up against a fixed
+    threshold — an unvalidated change to the abstain rate, which is the backdoor
+    threshold dial in reverse. A dead signal contributes 0 either way, so pinning
+    must leave current behaviour bit-for-bit identical."""
+    pinned = wf.pin_dead_signals(
+        {"us_spillover": 0.5, "sentiment": 0.5, "threshold": 0.2},
+        live={"us_spillover"})
+    assert pinned["sentiment"] == 0.0
+    assert pinned["us_spillover"] == 0.5        # untouched, NOT rescaled to 1.0
+
+
+def test_unearned_weight_cannot_steer_predictions_when_a_feed_wakes_up():
+    """Regression: DEFAULT_WEIGHTS hand-sets sentiment=0.35, and blend() carries
+    it forward through every adoption. While the feed was dead the weight was
+    inert; the day news started producing values it would have begun moving live
+    predictions without ever having been fitted."""
+    incumbent = {"us_spillover": 0.65, "sentiment": 0.35, "threshold": 0.15}
+    # One record in fifty carries sentiment — below the 5% coverage floor.
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 49 + \
+           [{"us_spillover": 1.0, "sentiment": 0.9}]
+    pinned = wf.pin_dead_signals(incumbent, wf.live_signals(recs))
+    assert pinned["sentiment"] == 0.0
+    # ...and it switches itself on once the feed has real history.
+    mature = [{"us_spillover": 1.0, "sentiment": 0.4}] * 10
+    assert "sentiment" in wf.live_signals(mature)
+
+
+def test_pin_persists_even_when_the_incumbent_is_kept(monkeypatch):
+    """Adoption is gated by cooldown and a holdout gain, so a sector can sit for
+    weeks on an incumbent carrying an unearned weight. The pin must not wait for
+    an adoption that may never come."""
+    tmp = _seeded_db(monkeypatch)
+    monkeypatch.setattr(config, "LEARNING_MIN_HOLDOUT_RECORDS", 5)
+    monkeypatch.setattr(config, "LEARNING_MIN_HOLDOUT_BETS", 1)
+    monkeypatch.setattr(config, "LEARNING_MIN_IMPROVEMENT", 99.0)   # never adopt
+    monkeypatch.setattr(config, "LEARNING_HOLDOUT_DAYS", 20)
+    inc = {"us_spillover": 0.45, "sentiment": 0.35, "macro": 0.2, "threshold": 0.2}
+    # sentiment/macro are identically zero across the history -> not weightable
+    recs = [_rec(f"2026-{1 + i // 30:02d}-{1 + i % 30:02d}",
+                 us=(1.0 if i % 3 else -1.0), sent=0.0,
+                 move=(1.5 if i % 3 else -1.5)) for i in range(150)]
+    row = at.tune_sector("semis", recs, inc, "2026-08-10", "t", db_path=tmp)
+    assert row["adopted"] == 0
+    stored = db.get_model_params("semis", tmp)
+    assert stored["sentiment"] == 0.0 and stored["macro"] == 0.0
+    assert stored["us_spillover"] == 0.45      # live weight untouched
+
+
+def test_pin_applies_even_while_a_sector_is_in_cooldown(monkeypatch):
+    """The guards all return early. A sector in cooldown must still get pinned,
+    or it keeps an unearned weight for exactly as long as the cooldown lasts."""
+    tmp = _seeded_db(monkeypatch)
+    monkeypatch.setattr(config, "LEARNING_MIN_HOLDOUT_RECORDS", 5)
+    monkeypatch.setattr(config, "LEARNING_HOLDOUT_DAYS", 20)
+    monkeypatch.setattr(config, "LEARNING_ADOPT_COOLDOWN_DAYS", 999)
+    db.record_learning({
+        "run_date": "2026-08-09", "sector": "semis",
+        "params_before": "{}", "params_after": "{}",
+        "score_before": None, "score_after": None, "hit_before": None,
+        "hit_after": None, "n_holdout": 45, "adopted": 1,
+        "reason": "prior adoption", "created_at": "t"}, tmp)
+
+    inc = {"us_spillover": 0.45, "sentiment": 0.35, "macro": 0.2, "threshold": 0.2}
+    recs = [_rec(f"2026-{1 + i // 30:02d}-{1 + i % 30:02d}",
+                 us=(1.0 if i % 3 else -1.0), sent=0.0,
+                 move=(1.5 if i % 3 else -1.5)) for i in range(150)]
+    row = at.tune_sector("semis", recs, inc, "2026-08-10", "t", db_path=tmp)
+    assert row["adopted"] == 0 and "cooldown" in row["reason"]
+    assert db.get_model_params("semis", tmp)["sentiment"] == 0.0
