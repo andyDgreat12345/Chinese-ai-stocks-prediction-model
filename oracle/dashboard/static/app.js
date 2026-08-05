@@ -215,6 +215,32 @@ function drawHub(usSeries, legs) {
   return svg;
 }
 
+/* Equity curve: a filled area against the starting-capital baseline, so time
+ * spent underwater is visible rather than hidden by autoscaling. */
+function drawEquity(curve, start) {
+  const W = 640, H = 150, PAD = 6, PAD_B = 12;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart",
+                             preserveAspectRatio: "none" });
+  if (!curve.length) return svg;
+  const vals = curve.map((p) => p[1]);
+  let lo = Math.min(...vals, start), hi = Math.max(...vals, start);
+  const span = (hi - lo) || 1;
+  lo -= span * 0.08; hi += span * 0.08;
+  const n = curve.length;
+  const x = (i) => PAD + (n <= 1 ? 0 : (i / (n - 1)) * (W - PAD * 2));
+  const y = (v) => PAD + (1 - (v - lo) / (hi - lo)) * (H - PAD - PAD_B);
+  svg.appendChild(svgEl("line", { x1: PAD, x2: W - PAD, y1: y(start), y2: y(start),
+                                  class: "zeroline" }));
+  const d = curve.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const last = vals[vals.length - 1];
+  svg.appendChild(svgEl("path", {
+    d: `${d} L${x(n - 1).toFixed(1)},${y(start).toFixed(1)} L${x(0).toFixed(1)},${y(start).toFixed(1)} Z`,
+    fill: last >= start ? "rgba(53,255,158,.12)" : "rgba(255,95,109,.12)", stroke: "none" }));
+  svg.appendChild(svgEl("path", { d, fill: "none",
+    stroke: last >= start ? "var(--green)" : "var(--red)", "stroke-width": 1.6 }));
+  return svg;
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
@@ -238,6 +264,50 @@ const PANELS = [
         body.appendChild(el("div", "rep-head " + cls, esc(label)));
         for (const m of items) body.appendChild(reportItem(m));
       }
+    },
+  },
+  {
+    id: "simulation", title: "Trader Simulation (paper)", wide: true,
+    async render(body) {
+      const d = await getJSON("simulation");
+      if (!d.available) return void (body.innerHTML = emptyNote(d.reason || "unavailable"));
+      const r = d.rules || {};
+      const pc = (v) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(2)}%`);
+      body.innerHTML = "";
+      body.appendChild(el("div", "dim",
+        `conviction ≥ ${esc(r.min_conviction)} · risk ${r.risk_per_trade_pct}%/trade · ` +
+        `stop ${r.stop_loss_pct}% / target ${r.take_profit_pct}% · max ${r.max_positions} positions · ` +
+        `hold ≤ ${r.max_hold_days}d · ${r.cost_bps}bps round trip · ` +
+        (r.allow_short ? "shorting on" : "long-only")));
+
+      const beat = d.beat_buy_and_hold;
+      body.appendChild(el("div", "bigstat",
+        `<span class="pct ${d.return_pct >= 0 ? "" : "neg"}">${pc(d.return_pct)}</span>
+         <span class="lbl">over ${d.sessions} sessions · buy &amp; hold ${pc(d.buy_and_hold_return_pct)}
+           · <b class="${beat ? "pos" : "neg"}">${beat ? "beat" : "did not beat"} buy &amp; hold</b></span>`));
+
+      body.appendChild(drawEquity(d.equity_curve || [], d.starting_cash));
+
+      const t = el("table");
+      t.innerHTML =
+        `<tr><th>trades</th><th class="num">win rate</th><th class="num">avg win</th>
+             <th class="num">avg loss</th><th class="num">profit factor</th>
+             <th class="num">max DD</th></tr>
+         <tr><td>${d.n_trades}</td>
+             <td class="num">${d.win_rate == null ? "—" : (d.win_rate * 100).toFixed(0) + "%"}</td>
+             <td class="num pos">${pc(d.avg_win_pct)}</td>
+             <td class="num neg">${pc(d.avg_loss_pct)}</td>
+             <td class="num">${d.profit_factor ?? "—"}</td>
+             <td class="num neg">${pc(d.max_drawdown_pct)}</td></tr>`;
+      body.appendChild(t);
+
+      const ex = Object.entries(d.exit_reasons || {})
+        .map(([k, v]) => `${esc(k)} ${v}`).join(" · ");
+      body.appendChild(el("div", "rationale", `exits: ${ex || "—"}`));
+      body.appendChild(el("div", "rationale",
+        "Paper only. Inputs are lookahead-free (each session decided from the PRIOR " +
+        "US close), but live fills, taxes and regime change are not modeled. " +
+        "Not investment advice."));
     },
   },
   {
