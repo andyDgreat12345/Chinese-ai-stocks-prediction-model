@@ -170,6 +170,48 @@ def charts(days: int = 90) -> dict:
     return {"disclaimer": config.DISCLAIMER, "days": days, "sectors": out}
 
 
+@app.get("/api/pairs")
+def pairs(limit: int = 6, days: int = 90) -> dict:
+    """Established US↔China correlations rendered as paired, lag-aligned series.
+
+    Tradeable (lag>=1) relationships are ranked FIRST: the strongest raw numbers on
+    the leaderboard are same-day, and same-day is a mirage here — the US closes
+    ~14h after China, so that bar doesn't exist yet when China closes."""
+    from ..analysis import pairs as pr
+
+    db.init_db()
+    rows = [r for r in db.leaderboard(True) if r.get("correlation") is not None]
+    # One entry per symbol pair (keep its strongest window), then rank.
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        k = (r["us_symbol"], r["china_symbol"])
+        if k not in best or abs(r["correlation"]) > abs(best[k]["correlation"]):
+            best[k] = r
+    ranked = pr.rank_pairs(list(best.values()))[:limit]
+
+    def series(table, symbol):
+        return [(x["trade_date"], x["close"]) for x in
+                db.close_series(table, symbol=symbol, limit=days + 5)
+                if x["close"] is not None]
+
+    out = []
+    for r in ranked:
+        us_s = series("us_close", r["us_symbol"])
+        cn_s = series("china_close", r["china_symbol"])
+        if len(us_s) < 5 or len(cn_s) < 5:
+            continue
+        out.append(pr.build_pair(r, us_s, cn_s, limit=days))
+    return {
+        "disclaimer": config.DISCLAIMER,
+        "min_sample": config.MIN_CORRELATION_SAMPLE,
+        "timing": {
+            "china_close_utc": pr.CHINA_CLOSE_UTC, "us_close_utc": pr.US_CLOSE_UTC,
+            "hours_us_after_china": pr.HOURS_US_AFTER_CHINA,
+        },
+        "pairs": out,
+    }
+
+
 @app.get("/api/learning")
 def learning() -> dict:
     """Self-improvement state (§4b): the per-sector parameters the walk-forward

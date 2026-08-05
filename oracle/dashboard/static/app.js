@@ -148,6 +148,37 @@ function drawChart(bars, opts) {
   return svg;
 }
 
+/* Two rebased % series on one axis (US vs China), already lag-aligned server-side
+ * so a genuine lead shows up as the lines tracking each other. */
+function drawPair(us, china) {
+  const W = 640, H = 150, PAD = 6, PAD_B = 14;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart pairchart",
+                             preserveAspectRatio: "none" });
+  const all = [...us.map((p) => p.v), ...china.map((p) => p.v)];
+  if (!all.length) return svg;
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const span = (hi - lo) || 1;
+  lo -= span * 0.08; hi += span * 0.08;
+  const n = Math.max(us.length, china.length);
+  const x = (i) => PAD + (n <= 1 ? 0 : (i / (n - 1)) * (W - PAD * 2));
+  const y = (v) => PAD + (1 - (v - lo) / (hi - lo)) * (H - PAD - PAD_B);
+  const path = (pts, cls) => {
+    if (!pts.length) return;
+    svg.appendChild(svgEl("path", {
+      d: pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(""),
+      class: cls,
+    }));
+  };
+  // zero line, so "which one is up on the window" reads instantly
+  if (lo < 0 && hi > 0) {
+    svg.appendChild(svgEl("line", { x1: PAD, x2: W - PAD, y1: y(0), y2: y(0),
+                                    class: "zeroline" }));
+  }
+  path(us, "usline");
+  path(china, "cnline");
+  return svg;
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
@@ -210,6 +241,42 @@ const PANELS = [
         "The cone is the measured 10–90% range of what actually happened on past days " +
         "with this call — not a predicted candlestick. We have no intraday data, so a " +
         "drawn future bar would be invented precision."));
+    },
+  },
+  {
+    id: "pairs", title: "US → China Lead/Lag (paired K-lines)", wide: true,
+    async render(body) {
+      const d = await getJSON("pairs");
+      const ps = d.pairs || [];
+      if (!ps.length) return void (body.innerHTML = emptyNote("No established correlations yet."));
+      body.innerHTML = "";
+      const t = d.timing || {};
+      body.appendChild(el("div", "dim",
+        `China closes ${esc(t.china_close_utc)} UTC · US closes ${esc(t.us_close_utc)} UTC ` +
+        `(~${t.hours_us_after_china}h later)`));
+      for (const p of ps) {
+        const box = el("div", "chartbox");
+        const badge = p.predictive
+          ? `<span class="badge est">lag ${p.best_lag}d · tradeable</span>`
+          : `<span class="badge noisy">lag 0 · not tradeable</span>`;
+        const head = el("div", "pred-top");
+        head.innerHTML =
+          `<span class="sector">${esc(p.us_symbol)} → ${esc(p.china_symbol)}</span>
+           ${badge}
+           <span class="repdir ${p.correlation >= 0 ? "pos" : "neg"}">r=${Number(p.correlation).toFixed(3)}
+             <span class="dim">n=${p.sample_size}, ${p.window_days}d window</span></span>`;
+        box.appendChild(head);
+        box.appendChild(drawPair(p.us || [], p.china || []));
+        box.appendChild(el("div", "rationale",
+          `<span class="usline-key">━</span> ${esc(p.us_symbol)} (US) &nbsp; ` +
+          `<span class="cnline-key">━</span> ${esc(p.china_symbol)} (China) — both rebased to % ` +
+          `from the window start${p.best_lag ? `, US shifted forward ${p.best_lag}d` : ""}`));
+        box.appendChild(el("div", "rationale " + (p.predictive ? "" : "warn"), esc(p.lag_note)));
+        body.appendChild(box);
+      }
+      body.appendChild(el("div", "rationale",
+        "Tradeable (lag ≥ 1) pairs are listed first on purpose: the biggest raw " +
+        "correlations here are same-day, and same-day cannot be acted on."));
     },
   },
   {
