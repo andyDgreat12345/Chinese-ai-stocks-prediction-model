@@ -97,3 +97,20 @@ def analyze(headline: str, summary: str = "") -> NewsSignal:
         sentiment=round(score_sentiment(text), 4),
         category=classify_category(text),
     )
+
+
+# ── language routing ──────────────────────────────────────────────────────
+def analyze_any(headline: str, summary: str = ""):
+    """Analyze a headline in either language.
+
+    Chinese text is routed to `sentiment_zh` (substring lexicon, Chinese
+    negation/intensity handling); everything else uses the English engine above.
+    Both return an object with `.sentiment` and `.category` drawn from the SAME
+    category vocabulary, so the news-impact table (§4b-ii) aggregates the two
+    languages into one signal rather than splitting the sample.
+    """
+    from .sentiment_zh import analyze_zh, is_chinese
+
+    if is_chinese(f"{headline} {summary}"):
+        return analyze_zh(headline, summary)
+    return analyze(headline, summary)
