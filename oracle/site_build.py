@@ -26,6 +26,7 @@ ENDPOINTS = {
     "learning": server.learning,
     "charts": lambda: server.charts(days=90),
     "pairs": lambda: server.pairs(limit=6, days=90),
+    "correlation-accumulated": server.correlation_accumulated,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

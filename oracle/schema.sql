@@ -143,6 +143,23 @@ CREATE TABLE IF NOT EXISTS correlations (
     UNIQUE (us_symbol, china_symbol, window_days)
 );
 
+-- Append-only log of every correlation reading, one row per pair/lag per day.
+-- The `correlations` table above is a SNAPSHOT (it overwrites daily); this is the
+-- ACCUMULATION. A relationship that has read +0.4 consistently for sixty
+-- observations is worth far more than one that reads +0.6 today and -0.2 last
+-- week, and only a history can tell those apart.
+CREATE TABLE IF NOT EXISTS correlation_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    observed_on   TEXT NOT NULL,         -- date the reading was taken
+    us_symbol     TEXT NOT NULL,
+    china_symbol  TEXT NOT NULL,
+    lag           INTEGER NOT NULL,      -- 0 = same-day (untradeable), >=1 = predictive
+    window_days   INTEGER NOT NULL,      -- 0 = expanding (all history to date)
+    correlation   REAL,
+    sample_size   INTEGER,
+    UNIQUE (observed_on, us_symbol, china_symbol, lag, window_days)
+);
+
 -- News-category -> typical subsequent China sector move (spec §4b-ii).
 CREATE TABLE IF NOT EXISTS news_impact (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

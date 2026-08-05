@@ -15,13 +15,15 @@ from datetime import datetime, timezone
 
 from .. import config, db
 from ..analysis.pipeline import SECTOR_NEWS_CATEGORIES
-from .stats import best_lag_correlation, variance
+from .stats import best_lag_correlation, lagged_pairs, pearson, variance
 
 
 def update_correlations() -> int:
     """Recompute rolling correlations for all US↔China symbol pairs over each
     configured window. Returns the number of (pair, window) rows written."""
     now = datetime.now(timezone.utc).isoformat()
+    today = now[:10]
+    observed = 0
     try:
         us_symbols = db.distinct_symbols("us_close")
         china_symbols = db.distinct_symbols("china_close")
@@ -50,11 +52,39 @@ def update_correlations() -> int:
                         "computed_at": now,
                     })
                     written += 1
-        print(f"update_correlations: wrote {written} correlation rows")
+
+                # ── accumulation (§4b-ii): record today's reading per lag on the
+                # EXPANDING window (all history to date), so the estimate steadies
+                # as data grows and a stable relationship becomes distinguishable
+                # from a lucky snapshot. The snapshot rows above are overwritten
+                # daily; these are append-only.
+                for lag_k in (0, 1):
+                    xs, ys = lagged_pairs(us_series[us_sym], china_series[ch_sym], lag_k)
+                    r_all = pearson(xs, ys)
+                    if r_all is None:
+                        continue
+                    db.record_correlation_observation({
+                        "observed_on": today, "us_symbol": us_sym,
+                        "china_symbol": ch_sym, "lag": lag_k, "window_days": 0,
+                        "correlation": round(r_all, 6), "sample_size": len(xs),
+                    })
+                    observed += 1
+
+        print(f"update_correlations: wrote {written} snapshot rows, "
+              f"recorded {observed} accumulated observations for {today}")
         return written
     except Exception as e:  # noqa: BLE001
         print(f"update_correlations FAILED: {e!r}")
         return 0
+
+
+def accumulated_leaderboard(predictive_only: bool = True, db_path=None) -> list[dict]:
+    """The accumulated (built-up-over-time) ranking — the list to pick the most
+    reliably correlated pairs from. Defaults to tradeable lags only."""
+    from .accumulate import rank_accumulated
+
+    return rank_accumulated(db.correlation_history_grouped(0, db_path),
+                            predictive_only=predictive_only)
 
 
 # Which China sectors a news category is expected to move (inverse of the
