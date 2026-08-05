@@ -579,6 +579,56 @@ def leaderboard(established_only: bool = False, db_path=None) -> list[dict]:
         conn.close()
 
 
+def record_correlation_observation(row: dict, db_path=None) -> None:
+    """Append one day's correlation reading (idempotent per day/pair/lag/window)."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO correlation_history
+                   (observed_on, us_symbol, china_symbol, lag, window_days,
+                    correlation, sample_size)
+               VALUES (:observed_on, :us_symbol, :china_symbol, :lag, :window_days,
+                       :correlation, :sample_size)
+               ON CONFLICT(observed_on, us_symbol, china_symbol, lag, window_days)
+               DO UPDATE SET correlation=excluded.correlation,
+                             sample_size=excluded.sample_size""",
+            row)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def correlation_observations(us_symbol: str, china_symbol: str, lag: int,
+                             window_days: int = 0, db_path=None) -> list[dict]:
+    """Every recorded reading for one pair/lag/window, oldest first."""
+    conn = connect(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            """SELECT observed_on, correlation, sample_size FROM correlation_history
+               WHERE us_symbol=? AND china_symbol=? AND lag=? AND window_days=?
+               ORDER BY observed_on""",
+            (us_symbol, china_symbol, lag, window_days))]
+    finally:
+        conn.close()
+
+
+def correlation_history_grouped(window_days: int = 0, db_path=None) -> dict:
+    """All readings grouped by (us_symbol, china_symbol, lag) for the accumulator."""
+    conn = connect(db_path)
+    try:
+        out: dict[tuple, list[dict]] = {}
+        for r in conn.execute(
+            """SELECT us_symbol, china_symbol, lag, observed_on, correlation,
+                      sample_size FROM correlation_history
+               WHERE window_days=? ORDER BY observed_on""", (window_days,)):
+            out.setdefault((r["us_symbol"], r["china_symbol"], r["lag"]), []).append(
+                {"observed_on": r["observed_on"], "correlation": r["correlation"],
+                 "sample_size": r["sample_size"]})
+        return out
+    finally:
+        conn.close()
+
+
 def upsert_news_impact(row: dict, db_path=None) -> None:
     conn = connect(db_path)
     try:

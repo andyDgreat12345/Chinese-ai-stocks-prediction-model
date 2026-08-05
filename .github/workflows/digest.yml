@@ -68,6 +68,8 @@ jobs:
             python -m oracle.usage || echo "(usage meter unavailable)"
             echo
             python -m oracle.learning.autotune --report || echo "(learning state unavailable)"
+            echo
+            python -c "from oracle import db; db.init_db(); from oracle.reflection.correlation import accumulated_leaderboard; from oracle.reflection.accumulate import format_accumulated; print(format_accumulated(accumulated_leaderboard()))" || echo "(accumulated correlations unavailable)"
             echo '```'
             echo
             echo "**Reading it:** a strategy earns trust only if it beats the baselines on"

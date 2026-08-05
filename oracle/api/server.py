@@ -170,6 +170,22 @@ def charts(days: int = 90) -> dict:
     return {"disclaimer": config.DISCLAIMER, "days": days, "sectors": out}
 
 
+@app.get("/api/correlation-accumulated")
+def correlation_accumulated(predictive_only: bool = True) -> dict:
+    """US↔China links ranked by how well they have HELD UP over time, not by
+    today's biggest number. reliability = |mean r| × sign-persistence × maturity."""
+    from ..reflection.correlation import accumulated_leaderboard
+
+    db.init_db()
+    rows = accumulated_leaderboard(predictive_only=predictive_only)
+    return {
+        "disclaimer": config.DISCLAIMER,
+        "predictive_only": predictive_only,
+        "n": len(rows),
+        "rows": rows,
+    }
+
+
 @app.get("/api/pairs")
 def pairs(limit: int = 6, days: int = 90) -> dict:
     """Established US↔China correlations rendered as paired, lag-aligned series.
@@ -178,16 +194,29 @@ def pairs(limit: int = 6, days: int = 90) -> dict:
     the leaderboard are same-day, and same-day is a mirage here — the US closes
     ~14h after China, so that bar doesn't exist yet when China closes."""
     from ..analysis import pairs as pr
+    from ..reflection.correlation import accumulated_leaderboard
 
     db.init_db()
-    rows = [r for r in db.leaderboard(True) if r.get("correlation") is not None]
-    # One entry per symbol pair (keep its strongest window), then rank.
-    best: dict[tuple, dict] = {}
-    for r in rows:
-        k = (r["us_symbol"], r["china_symbol"])
-        if k not in best or abs(r["correlation"]) > abs(best[k]["correlation"]):
-            best[k] = r
-    ranked = pr.rank_pairs(list(best.values()))[:limit]
+    # Prefer the ACCUMULATED ranking — links that have held up across many days,
+    # not today's biggest number. Falls back to the daily snapshot until enough
+    # observations have accumulated (the reflection pass records one set/day).
+    acc = accumulated_leaderboard(predictive_only=True)
+    source = "accumulated"
+    if acc:
+        ranked = [{"us_symbol": r["us_symbol"], "china_symbol": r["china_symbol"],
+                   "correlation": r["mean_correlation"], "best_lag": r["lag"],
+                   "sample_size": r["sample_size"], "window_days": 0,
+                   "reliability": r["reliability"], "persistence": r["persistence"],
+                   "n_observations": r["n_observations"]} for r in acc[:limit]]
+    else:
+        source = "snapshot (accumulation still building)"
+        rows = [r for r in db.leaderboard(True) if r.get("correlation") is not None]
+        best: dict[tuple, dict] = {}
+        for r in rows:
+            k = (r["us_symbol"], r["china_symbol"])
+            if k not in best or abs(r["correlation"]) > abs(best[k]["correlation"]):
+                best[k] = r
+        ranked = pr.rank_pairs(list(best.values()))[:limit]
 
     def series(table, symbol):
         return [(x["trade_date"], x["close"]) for x in
@@ -200,9 +229,15 @@ def pairs(limit: int = 6, days: int = 90) -> dict:
         cn_s = series("china_close", r["china_symbol"])
         if len(us_s) < 5 or len(cn_s) < 5:
             continue
-        out.append(pr.build_pair(r, us_s, cn_s, limit=days))
+        built = pr.build_pair(r, us_s, cn_s, limit=days)
+        # carry the accumulation stats through when they exist
+        for k in ("reliability", "persistence", "n_observations"):
+            if r.get(k) is not None:
+                built[k] = r[k]
+        out.append(built)
     return {
         "disclaimer": config.DISCLAIMER,
+        "ranking_source": source,
         "min_sample": config.MIN_CORRELATION_SAMPLE,
         "timing": {
             "china_close_utc": pr.CHINA_CLOSE_UTC, "us_close_utc": pr.US_CLOSE_UTC,
