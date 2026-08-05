@@ -579,6 +579,54 @@ def leaderboard(established_only: bool = False, db_path=None) -> list[dict]:
         conn.close()
 
 
+def upsert_proven_pair(row: dict, db_path=None) -> None:
+    """Register a sweep survivor. Re-running discovery updates the discovery
+    stats but preserves the refresh counters."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO proven_pairs
+                   (us_symbol, china_symbol, lag, r_discovered, q_value,
+                    n_discovered, discovered_on)
+               VALUES (:us_symbol, :china_symbol, :lag, :r_discovered, :q_value,
+                       :n_discovered, :discovered_on)
+               ON CONFLICT(us_symbol, china_symbol, lag) DO UPDATE SET
+                   r_discovered=excluded.r_discovered, q_value=excluded.q_value,
+                   n_discovered=excluded.n_discovered""",
+            row)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def refresh_proven_pair(us_symbol: str, china_symbol: str, lag: int,
+                        current_r: float, current_n: int, refreshed_on: str,
+                        db_path=None) -> None:
+    """Update a proven pair's live correlation factor (called each reflection)."""
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            """UPDATE proven_pairs
+               SET current_r=?, current_n=?, refreshed_on=?,
+                   refresh_count=COALESCE(refresh_count, 0) + 1
+               WHERE us_symbol=? AND china_symbol=? AND lag=?""",
+            (current_r, current_n, refreshed_on, us_symbol, china_symbol, lag))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def proven_pairs(db_path=None) -> list[dict]:
+    """All registered proven pairs, strongest current correlation first."""
+    conn = connect(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            """SELECT * FROM proven_pairs
+               ORDER BY ABS(COALESCE(current_r, r_discovered)) DESC""")]
+    finally:
+        conn.close()
+
+
 def record_correlation_observation(row: dict, db_path=None) -> None:
     """Append one day's correlation reading (idempotent per day/pair/lag/window)."""
     conn = connect(db_path)

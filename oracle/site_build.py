@@ -27,6 +27,7 @@ ENDPOINTS = {
     "charts": lambda: server.charts(days=90),
     "pairs": lambda: server.pairs(limit=6, days=90),
     "correlation-accumulated": server.correlation_accumulated,
+    "proven-hubs": lambda: server.proven_hubs(days=90, limit=6),
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

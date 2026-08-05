@@ -160,6 +160,25 @@ CREATE TABLE IF NOT EXISTS correlation_history (
     UNIQUE (observed_on, us_symbol, china_symbol, lag, window_days)
 );
 
+-- Pairs that survived the wide research sweep (FDR-corrected, sign-stable,
+-- tradeable lag). These are promoted to first-class citizens: the reflection
+-- pass refreshes each one's correlation factor every round, so a proven link is
+-- continuously re-tested rather than trusted forever on one discovery run.
+CREATE TABLE IF NOT EXISTS proven_pairs (
+    us_symbol      TEXT NOT NULL,
+    china_symbol   TEXT NOT NULL,
+    lag            INTEGER NOT NULL,
+    r_discovered   REAL,               -- correlation at discovery
+    q_value        REAL,               -- FDR-corrected q at discovery
+    n_discovered   INTEGER,
+    discovered_on  TEXT NOT NULL,
+    current_r      REAL,               -- refreshed every reflection round
+    current_n      INTEGER,
+    refreshed_on   TEXT,
+    refresh_count  INTEGER DEFAULT 0,
+    PRIMARY KEY (us_symbol, china_symbol, lag)
+);
+
 -- News-category -> typical subsequent China sector move (spec §4b-ii).
 CREATE TABLE IF NOT EXISTS news_impact (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
