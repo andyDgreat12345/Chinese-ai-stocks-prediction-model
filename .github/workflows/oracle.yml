@@ -17,7 +17,7 @@ on:
         description: "Which phase to run"
         type: choice
         default: all
-        options: [all, morning, afternoon, backfill, backtest]
+        options: [all, morning, afternoon, backfill, backtest, research]
 
 permissions:
   contents: write   # push the oracle-state branch
@@ -114,6 +114,9 @@ jobs:
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
               python -m oracle.backtest ;;
+            research)                    # wide US<->China correlation sweep + report
+              python -m oracle.research.run 400 --out research_report.md
+              cp research_report.md _state/research_report.md ;;
             *)                           # morning / afternoon / all daily jobs
               python -m oracle.run "$phase" ;;
           esac
