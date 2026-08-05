@@ -127,8 +127,30 @@ def sample_params(live: set[str], n: int = 160, thresholds: list[float] | None =
     return out
 
 
-def live_signals(records: list[dict]) -> set[str]:
-    """Which component signals actually vary in this history.
+# A signal must be non-zero on at least this share of records to be weightable.
+# "Varies at all" is too weak a test: news ingestion went live on one day of a
+# 369-day history, so `sentiment` was non-zero on 0.3% of records and instantly
+# qualified — a weight on it would be fitted almost entirely to a single day
+# while behaving as a threshold rescale on every other one. That is the same
+# backdoor `macro` opened, arriving through a different door.
+MIN_SIGNAL_COVERAGE = 0.05
+
+
+def signal_coverage(records: list[dict]) -> dict[str, float]:
+    """Share of records on which each signal is non-zero. Pure."""
+    n = len(records)
+    if not n:
+        return {name: 0.0 for name in SIGNAL_KEYS}
+    out = {}
+    for idx, name in enumerate(SIGNAL_KEYS):
+        hits = sum(1 for r in records if abs(signal_tuple(r)[idx]) > 1e-9)
+        out[name] = hits / n
+    return out
+
+
+def live_signals(records: list[dict],
+                 min_coverage: float = MIN_SIGNAL_COVERAGE) -> set[str]:
+    """Which component signals carry enough information to be worth a weight.
 
     ``macro`` is currently emitted as a constant 0.0 by ``build_signals`` (events
     are flagged, not directionally scored). A weight on a dead signal is not a
@@ -136,11 +158,13 @@ def live_signals(records: list[dict]) -> set[str]:
     exploit as a backdoor threshold dial, wasting a search dimension and
     producing learned weights that misrepresent what the model is doing. So the
     grid only spans signals that carry information, and this re-widens
-    automatically the day macro becomes a live directional signal."""
-    live = set()
-    for idx, name in enumerate(SIGNAL_KEYS):
-        if any(abs(signal_tuple(r)[idx]) > 1e-9 for r in records):
-            live.add(name)
+    automatically the day macro becomes a live directional signal.
+
+    A *sparse* signal is the same hazard wearing a disguise, so presence is not
+    enough — a signal must also clear ``min_coverage``. A newly-wired feed earns
+    its weight once it has history, not on its first day."""
+    coverage = signal_coverage(records)
+    live = {name for name, c in coverage.items() if c >= min_coverage}
     return live or {"us_spillover"}
 
 
@@ -265,4 +289,34 @@ def blend(incumbent: dict, candidate: dict, step: float) -> dict:
         for k in SIGNAL_KEYS:
             out[k] = round(out[k] / total, 4)
     out["threshold"] = round(max(0.01, out["threshold"]), 4)
+    return out
+
+
+def pin_dead_signals(params: dict, live: set[str]) -> dict:
+    """Zero the weight of every signal not in ``live``, then renormalize. Pure.
+
+    The search grid already pins dead signals, but ``blend`` pulls the incumbent
+    forward, and the incumbent's ancestor is the hand-set ``DEFAULT_WEIGHTS``
+    (``sentiment`` 0.35). While a signal is identically zero that inherited weight
+    is inert and invisible. The hazard is the handover: the moment the feed starts
+    producing values, a weight that was never fitted — because the search could
+    not touch a constant — begins moving live predictions, and it keeps doing so
+    until coverage is high enough for the tuner to judge it.
+
+    Pinning closes that window. A signal contributes only once it has earned a
+    weight on held-out days.
+
+    **Deliberately does not renormalize.** A dead signal contributes
+    ``weight × 0 = 0``, so zeroing its weight cannot change any current
+    prediction — but scaling the surviving weights back up to sum to 1 would:
+    it raises the composite against a fixed threshold, which is an unvalidated
+    change to the abstain rate. That is the backdoor threshold dial this module
+    exists to prevent, running in reverse. Leaving the total below 1 keeps
+    behaviour on today's data bit-for-bit identical and changes only what happens
+    when the signal wakes up.
+    """
+    out = dict(params)
+    for k in SIGNAL_KEYS:
+        if k not in live:
+            out[k] = 0.0
     return out

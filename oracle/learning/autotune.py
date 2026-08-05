@@ -51,6 +51,20 @@ def tune_sector(sector: str, records: list[dict], incumbent: dict,
     ledger row that was written (never raises for ordinary data shortfalls)."""
     search_pool, holdout = wf.split_holdout(records, config.LEARNING_HOLDOUT_DAYS)
 
+    # Drop any weight on a signal that has not earned one yet. This runs BEFORE
+    # the guards below, because every one of them can return early — a sector in
+    # cooldown, or one short on holdout, would otherwise keep an unearned weight
+    # indefinitely, and the whole risk is that a waking feed starts steering it.
+    # blend() pulls the incumbent forward and the incumbent descends from the
+    # hand-set DEFAULT_WEIGHTS (sentiment 0.35), so this is where that inheritance
+    # gets cut. Behaviour-preserving (a dead signal contributes 0 regardless), so
+    # it is a safety normalization rather than a learned change.
+    live = wf.live_signals(records)
+    pinned = wf.pin_dead_signals(incumbent, live)
+    if pinned != incumbent:
+        db.set_model_params(sector, pinned, created_at, db_path)
+        incumbent = pinned
+
     def ledger(adopted: bool, after: dict, before_s=None, after_s=None,
                reason: str = "") -> dict:
         row = {
@@ -85,7 +99,14 @@ def tune_sector(sector: str, records: list[dict], incumbent: dict,
         return ledger(False, incumbent,
                       reason="not enough history for honest walk-forward folds")
 
-    proposed = wf.blend(incumbent, candidate, config.LEARNING_STEP)
+    # Drop any weight on a signal that has not earned one yet. blend() pulls the
+    # incumbent forward and the incumbent descends from the hand-set
+    # DEFAULT_WEIGHTS (sentiment 0.35), so without this a never-fitted weight
+    # would start steering predictions the moment its feed came alive — before
+    # the tuner has the coverage to judge it. Both sides are pinned so the
+    # holdout comparison is like-for-like.
+    proposed = wf.pin_dead_signals(
+        wf.blend(incumbent, candidate, config.LEARNING_STEP), live)
     before = wf.score_params(holdout, incumbent, min_bets=1)
     after = wf.score_params(holdout, proposed, min_bets=1)
 

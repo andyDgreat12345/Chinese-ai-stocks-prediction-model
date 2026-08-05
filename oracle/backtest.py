@@ -108,6 +108,40 @@ def _prior_us_rows(by_date: dict, us_dates: list[str], china_date: str) -> list[
     return by_date.get(us_dates[i - 1], [])
 
 
+def _news_rows_by_date(db_path=None) -> tuple[dict, list[str]]:
+    """All news rows grouped by trade_date, plus the sorted date list."""
+    conn = db.connect(db_path)
+    try:
+        by_date: dict[str, list[dict]] = {}
+        for r in conn.execute("SELECT * FROM news ORDER BY trade_date"):
+            by_date.setdefault(r["trade_date"], []).append(dict(r))
+        return by_date, sorted(by_date)
+    finally:
+        conn.close()
+
+
+def _prior_news_rows(by_date: dict, news_dates: list[str], china_date: str) -> list[dict]:
+    """The most recent news batch STRICTLY BEFORE the China session predicted.
+
+    Same lookahead as ``_prior_us_rows``, different clock. ``fetch_world_news``
+    stamps ``trade_date`` with the UTC date at fetch time, and the morning job
+    fires at 21:00 UTC — 05:00 CST the *following* day. So news stamped D is
+    gathered ~14h AFTER china_close[D] has printed. Feeding news[d] into the
+    prediction for session d, as this replay used to, handed the model headlines
+    written after the session it was predicting.
+
+    news[d-1] → china[d] is the honest pairing and the one live actually has:
+    the 05:00 CST job reads the batch stamped the previous UTC date, ~4.5h before
+    the 09:30 CST open.
+    """
+    from bisect import bisect_left
+
+    i = bisect_left(news_dates, china_date)
+    if i == 0:
+        return []
+    return by_date.get(news_dates[i - 1], [])
+
+
 def collect_records(start=None, end=None, db_path=None) -> list[dict]:
     """Replay the model over every historical date that has an actual China
     close. Returns one record per (date, sector) that could be scored.
@@ -117,6 +151,7 @@ def collect_records(start=None, end=None, db_path=None) -> list[dict]:
     weights = db.get_weights(db_path)
     history = _sector_close_history(db_path)
     us_by_date, us_dates = _us_rows_by_date(db_path)
+    news_by_date, news_dates = _news_rows_by_date(db_path)
     records: list[dict] = []
     for d in _dates_with_actuals(db_path):
         if start and d < start:
@@ -125,7 +160,8 @@ def collect_records(start=None, end=None, db_path=None) -> list[dict]:
             continue
         # PRIOR US session — never the same date (see _prior_us_rows).
         us_rows = _prior_us_rows(us_by_date, us_dates, d)
-        news_rows = db.get_rows_for_date("news", d, db_path)
+        # PRIOR news batch — never the same date (see _prior_news_rows).
+        news_rows = _prior_news_rows(news_by_date, news_dates, d)
         macro = db.macro_event_dates(d, db_path)
         china_rows = db.get_rows_for_date("china_close", d, db_path)
         signals = build_signals(us_rows, news_rows, macro)
