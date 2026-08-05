@@ -28,6 +28,7 @@ def backfill_research_universe(days: int = 400) -> int:
     from ..backfill import (
         _download_us, _trim_days, _us_records, extract_dated_ohlc, ohlc_to_rows,
     )
+    from ..ingestion.us_market import SECTOR_TAGS as PIPELINE_TAGS
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     total, failed = 0, []
@@ -37,7 +38,14 @@ def backfill_research_universe(days: int = 400) -> int:
             if not series:
                 failed.append(sym)
                 continue
-            rows = ohlc_to_rows(sym, uni.group_of(sym), series, fetched_at)
+            # CRITICAL: never clobber the sector tag the prediction pipeline maps
+            # on (build_signals matches China sectors to US tags like "semis" /
+            # "energy"). Research groups ("us_sector", "china_proxy") are only for
+            # symbols the pipeline doesn't know; overwriting a pipeline symbol's
+            # tag silently zeroes every US spillover signal and turns every daily
+            # call neutral.
+            sector_tag = PIPELINE_TAGS.get(sym) or uni.group_of(sym)
+            rows = ohlc_to_rows(sym, sector_tag, series, fetched_at)
             total += db.upsert_market_close("us_close", rows)
         except Exception as e:  # noqa: BLE001
             failed.append(sym)
@@ -46,6 +54,26 @@ def backfill_research_universe(days: int = 400) -> int:
           f"{len(uni.us_symbols()) - len(failed)}/{len(uni.us_symbols())} symbols"
           + (f" (missing: {', '.join(failed)})" if failed else ""))
     return total
+
+
+def repair_sector_tags(db_path=None) -> int:
+    """Restore the pipeline's US sector tags if an earlier research backfill
+    overwrote them. Idempotent and safe to run any time."""
+    from ..ingestion.us_market import SECTOR_TAGS
+
+    conn = db.connect(db_path)
+    try:
+        fixed = 0
+        for sym, tag in SECTOR_TAGS.items():
+            cur = conn.execute(
+                "UPDATE us_close SET sector = ? WHERE symbol = ? AND sector IS NOT ?",
+                (tag, sym, tag))
+            fixed += cur.rowcount or 0
+        conn.commit()
+        print(f"repair_sector_tags: restored {fixed} row(s) to pipeline tags")
+        return fixed
+    finally:
+        conn.close()
 
 
 def _returns(table: str, symbol: str, db_path=None) -> dict[str, float]:
@@ -73,6 +101,7 @@ def run(days: int = 400, fetch: bool = True, db_path=None) -> dict:
     db.init_db(db_path)
     if fetch:
         backfill_research_universe(days)
+    repair_sector_tags(db_path)   # heal any tags a previous run overwrote
     us, cn = load_series(db_path)
     print(f"sweep universe: {len(us)} US × {len(cn)} China symbols "
           f"× {len(sw.DEFAULT_LAGS)} lags")
