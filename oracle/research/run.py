@@ -79,7 +79,23 @@ def run(days: int = 400, fetch: bool = True, db_path=None) -> dict:
     result = sw.sweep(us, cn)
     result["us_symbols"] = sorted(us)
     result["china_symbols"] = sorted(cn)
+    register_survivors(result, db_path)
     return result
+
+
+def register_survivors(result: dict, db_path=None) -> int:
+    """Promote sweep survivors to `proven_pairs`, so the reflection round
+    re-measures each one every day instead of trusting one discovery run."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    n = 0
+    for r in sw.survivors(result):
+        db.upsert_proven_pair({
+            "us_symbol": r["us_symbol"], "china_symbol": r["china_symbol"],
+            "lag": r["lag"], "r_discovered": r["r"], "q_value": r["q_value"],
+            "n_discovered": r["n"], "discovered_on": today}, db_path)
+        n += 1
+    print(f"register_survivors: registered {n} proven pair(s) for daily refresh")
+    return n
 
 
 # ── report ────────────────────────────────────────────────────────────────

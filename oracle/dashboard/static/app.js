@@ -179,6 +179,42 @@ function drawPair(us, china) {
   return svg;
 }
 
+/* Hub chart: one US series (thick amber) with every China series it leads,
+ * each in its own hue so they're distinguishable, all rebased to % and already
+ * lag-aligned server-side. */
+const HUB_HUES = [190, 145, 275, 25, 330, 95, 215, 55];
+
+function drawHub(usSeries, legs) {
+  const W = 640, H = 190, PAD = 6, PAD_B = 14;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart hubchart",
+                             preserveAspectRatio: "none" });
+  const all = [...usSeries.map((p) => p.v)];
+  for (const l of legs) for (const p of l.china) all.push(p.v);
+  if (!all.length) return svg;
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const span = (hi - lo) || 1;
+  lo -= span * 0.08; hi += span * 0.08;
+  const n = Math.max(usSeries.length, ...legs.map((l) => l.china.length));
+  const x = (i) => PAD + (n <= 1 ? 0 : (i / (n - 1)) * (W - PAD * 2));
+  const y = (v) => PAD + (1 - (v - lo) / (hi - lo)) * (H - PAD - PAD_B);
+  const draw = (pts, attrs) => {
+    if (!pts.length) return;
+    svg.appendChild(svgEl("path", {
+      d: pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(""),
+      fill: "none", ...attrs,
+    }));
+  };
+  if (lo < 0 && hi > 0) {
+    svg.appendChild(svgEl("line", { x1: PAD, x2: W - PAD, y1: y(0), y2: y(0),
+                                    class: "zeroline" }));
+  }
+  legs.forEach((l, i) => draw(l.china, {
+    stroke: `hsl(${HUB_HUES[i % HUB_HUES.length]}, 70%, 60%)`, "stroke-width": 1.4,
+  }));
+  draw(usSeries, { class: "usline", "stroke-width": 2.4 });   // the lead, on top
+  return svg;
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
@@ -244,6 +280,62 @@ const PANELS = [
     },
   },
   {
+    id: "proven-hubs", title: "Proven Correlations — US hub → China", wide: true,
+    async render(body) {
+      const d = await getJSON("proven-hubs");
+      if (!d.hubs || !d.hubs.length) {
+        return void (body.innerHTML = emptyNote(
+          "No proven pairs registered yet — run the research sweep (Actions → Oracle → phase: research)."));
+      }
+      body.innerHTML = "";
+      body.appendChild(el("div", "dim",
+        `${d.n_pairs} pairs survived the sweep · each refreshed every reflection round`));
+      for (const hub of d.hubs) {
+        const box = el("div", "chartbox");
+        const ul = hub.us_label || {};
+        const head = el("div", "pred-top");
+        head.innerHTML =
+          `<span class="sector">${esc(hub.us_symbol)}</span>
+           <span class="badge">${esc(ul.name || "")}</span>
+           <span class="badge noisy">${esc(ul.sector || "")}</span>
+           ${ul.company ? `<span class="badge">${esc(ul.company)}</span>` : ""}
+           <span class="repdir dim">leads ${hub.n_counterparts} China instrument(s)</span>`;
+        box.appendChild(head);
+        box.appendChild(drawHub(hub.legs[0] ? hub.legs[0].us : [], hub.legs));
+
+        // Legend: one row per China counterpart, with its own colour + label.
+        const t = el("table");
+        t.innerHTML = "<tr><th></th><th>China instrument</th><th>sector</th>" +
+          "<th class='num'>lag</th><th class='num'>r (now)</th>" +
+          "<th class='num'>r (found)</th><th class='num'>refreshes</th></tr>";
+        hub.legs.forEach((l, i) => {
+          const cl = l.china_label || {};
+          const hue = HUB_HUES[i % HUB_HUES.length];
+          const cur = l.current_r == null ? "—" : Number(l.current_r).toFixed(3);
+          t.insertAdjacentHTML("beforeend",
+            `<tr>
+               <td><span style="color:hsl(${hue},70%,60%)">━</span></td>
+               <td>${esc(cl.name || l.china_symbol)} <span class="dim">${esc(l.china_symbol)}</span>
+                   ${cl.company ? `<span class="badge">${esc(cl.company)}</span>` : ""}</td>
+               <td class="dim">${esc(cl.sector || "")}</td>
+               <td class="num">${l.lag}d</td>
+               <td class="num ${l.current_r >= 0 ? "pos" : "neg"}">${cur}</td>
+               <td class="num dim">${Number(l.r_discovered).toFixed(3)}</td>
+               <td class="num dim">${l.refresh_count}</td>
+             </tr>`);
+        });
+        box.appendChild(t);
+        box.appendChild(el("div", "rationale",
+          `<span class="usline-key">━</span> ${esc(hub.us_symbol)} (US lead, shifted forward by its lag) · ` +
+          "China lines coloured per the legend · all rebased to % from the window start"));
+        body.appendChild(box);
+      }
+      body.appendChild(el("div", "rationale",
+        "\"r (now)\" is re-measured every reflection round — a decaying link shows up " +
+        "as it falls away from \"r (found)\". Not investment advice."));
+    },
+  },
+  {
     id: "pairs", title: "US → China Lead/Lag (paired K-lines)", wide: true,
     async render(body) {
       const d = await getJSON("pairs");
@@ -262,6 +354,8 @@ const PANELS = [
         const head = el("div", "pred-top");
         head.innerHTML =
           `<span class="sector">${esc(p.us_symbol)} → ${esc(p.china_symbol)}</span>
+           <span class="badge">${esc((p.us_label||{}).name || "")} → ${esc((p.china_label||{}).name || "")}</span>
+           <span class="badge noisy">${esc((p.china_label||{}).sector || "")}</span>
            ${badge}
            <span class="repdir ${p.correlation >= 0 ? "pos" : "neg"}">r=${Number(p.correlation).toFixed(3)}
              <span class="dim">n=${p.sample_size}, ${p.window_days}d window</span></span>`;

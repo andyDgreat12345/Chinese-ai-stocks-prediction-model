@@ -170,6 +170,65 @@ def charts(days: int = 90) -> dict:
     return {"disclaimer": config.DISCLAIMER, "days": days, "sectors": out}
 
 
+@app.get("/api/proven-hubs")
+def proven_hubs(days: int = 90, limit: int = 6) -> dict:
+    """Sweep-proven pairs grouped into HUBS — one US symbol with every China
+    instrument it leads, so a US symbol that appeared many times is shown once
+    with all its counterparts overlaid instead of repeated per pair.
+
+    Every series carries a label (name · sector, plus the company when the
+    instrument is a specific company) so a chart legend never shows bare codes."""
+    from ..analysis import pairs as pr
+    from ..research import labels as lb
+
+    db.init_db()
+    rows = db.proven_pairs()
+    if not rows:
+        return {"disclaimer": config.DISCLAIMER, "hubs": [], "n_pairs": 0}
+
+    by_us: dict[str, list[dict]] = {}
+    for r in rows:
+        by_us.setdefault(r["us_symbol"], []).append(r)
+    # Hubs with the most counterparts first — those are the ones worth overlaying.
+    order = sorted(by_us.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:limit]
+
+    def series(table, symbol):
+        return [(x["trade_date"], x["close"]) for x in
+                db.close_series(table, symbol=symbol, limit=days + 5)
+                if x["close"] is not None]
+
+    hubs = []
+    for us_sym, prs in order:
+        us_s = series("us_close", us_sym)
+        if len(us_s) < 5:
+            continue
+        legs = []
+        for p in sorted(prs, key=lambda x: -abs(x.get("current_r") or x["r_discovered"] or 0)):
+            cn_s = series("china_close", p["china_symbol"])
+            if len(cn_s) < 5:
+                continue
+            aligned = pr.align_with_lag(us_s, cn_s, p["lag"])
+            if not aligned["dates"]:
+                continue
+            legs.append({
+                "china_symbol": p["china_symbol"],
+                "china_label": lb.label(p["china_symbol"]),
+                "lag": p["lag"],
+                "r_discovered": p["r_discovered"],
+                "current_r": p["current_r"],
+                "refresh_count": p["refresh_count"] or 0,
+                "refreshed_on": p["refreshed_on"],
+                "q_value": p["q_value"],
+                "china": aligned["china"],
+                "us": aligned["us"],
+            })
+        if legs:
+            hubs.append({"us_symbol": us_sym, "us_label": lb.label(us_sym),
+                         "n_counterparts": len(legs), "legs": legs})
+    return {"disclaimer": config.DISCLAIMER, "days": days,
+            "n_pairs": len(rows), "hubs": hubs}
+
+
 @app.get("/api/correlation-accumulated")
 def correlation_accumulated(predictive_only: bool = True) -> dict:
     """US↔China links ranked by how well they have HELD UP over time, not by
@@ -230,6 +289,9 @@ def pairs(limit: int = 6, days: int = 90) -> dict:
         if len(us_s) < 5 or len(cn_s) < 5:
             continue
         built = pr.build_pair(r, us_s, cn_s, limit=days)
+        from ..research import labels as lb
+        built["us_label"] = lb.label(r["us_symbol"])
+        built["china_label"] = lb.label(r["china_symbol"])
         # carry the accumulation stats through when they exist
         for k in ("reliability", "persistence", "n_observations"):
             if r.get(k) is not None:
