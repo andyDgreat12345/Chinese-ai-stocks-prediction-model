@@ -116,7 +116,12 @@ jobs:
               python -m oracle.backtest ;;
             research)                    # wide US<->China correlation sweep + report
               python -m oracle.research.run 400 --out research_report.md
-              cp research_report.md _state/research_report.md ;;
+              cp research_report.md _state/research_report.md
+              # Does Chinese news sentiment predict the next session? Reports
+              # "not measured yet" plus a detectability table until the history
+              # is long enough — never an empty result posing as a null one.
+              python -m oracle.research.news_signal > news_signal_report.md || true
+              cp news_signal_report.md _state/news_signal_report.md || true ;;
             *)                           # morning / afternoon / all daily jobs
               python -m oracle.run "$phase" ;;
           esac
