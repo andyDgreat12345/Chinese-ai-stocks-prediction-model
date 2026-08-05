@@ -3,7 +3,7 @@
  * does no compute of its own. Panel order persists in localStorage. */
 "use strict";
 
-const LS_ORDER = "cmo.panelOrder.v1";
+const LS_ORDER = "cmo.panelOrder.v2";
 const POLL_MS = 60_000;
 
 // ── helpers ────────────────────────────────────────────────────────────
@@ -67,31 +67,90 @@ function reportItem(m) {
   return row;
 }
 
+// ── candlestick chart (inline SVG, no libraries) ───────────────────────
+const SVG_NS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs) => {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  return n;
+};
+
+/* Draw price history + (when present) the forecast cone.
+ * Candlesticks are drawn only where real OHLC exists; otherwise a close line —
+ * we never fabricate a bar. The cone's width comes from the MEASURED p10/p90 of
+ * past outcomes under the same call, so it widens honestly when the edge is weak. */
+function drawChart(bars, opts) {
+  const W = 640, H = 200, PAD_L = 4, PAD_R = 54, PAD_T = 8, PAD_B = 16;
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`, class: "chart", preserveAspectRatio: "none",
+  });
+  if (!bars.length) return svg;
+
+  const cone = opts && opts.forecast && opts.forecast.enough ? opts.forecast : null;
+  const last = bars[bars.length - 1].c;
+  // Value range includes the cone so it never clips.
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) {
+    lo = Math.min(lo, b.l != null ? b.l : b.c);
+    hi = Math.max(hi, b.h != null ? b.h : b.c);
+  }
+  if (cone) {
+    lo = Math.min(lo, last * (1 + cone.p10_move_pct / 100));
+    hi = Math.max(hi, last * (1 + cone.p90_move_pct / 100));
+  }
+  const span = hi - lo || 1;
+  lo -= span * 0.05; hi += span * 0.05;
+  // Reserve the last ~8% of the x-axis for the forecast step.
+  const plotW = W - PAD_L - PAD_R;
+  const bodyW = cone ? plotW * 0.92 : plotW;
+  const n = bars.length;
+  const x = (i) => PAD_L + (n <= 1 ? bodyW / 2 : (i / (n - 1)) * bodyW);
+  const y = (v) => PAD_T + (1 - (v - lo) / (hi - lo)) * (H - PAD_T - PAD_B);
+  const step = n > 1 ? bodyW / (n - 1) : 6;
+  const cw = Math.max(1.2, Math.min(6, step * 0.62));
+
+  if (opts && opts.hasOhlc) {
+    for (let i = 0; i < n; i++) {
+      const b = bars[i];
+      if (b.o == null || b.h == null || b.l == null) continue;
+      const up = b.c >= b.o;
+      const cls = up ? "up" : "down";
+      svg.appendChild(svgEl("line", {                    // wick
+        x1: x(i), x2: x(i), y1: y(b.h), y2: y(b.l), class: `wick ${cls}`,
+      }));
+      const top = y(Math.max(b.o, b.c)), bot = y(Math.min(b.o, b.c));
+      svg.appendChild(svgEl("rect", {                    // body
+        x: x(i) - cw / 2, y: top, width: cw,
+        height: Math.max(1, bot - top), class: `candle ${cls}`,
+      }));
+    }
+  } else {
+    svg.appendChild(svgEl("path", {
+      d: bars.map((b, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(b.c).toFixed(1)}`).join(""),
+      class: "priceline",
+    }));
+  }
+
+  if (cone) {
+    const xNow = x(n - 1), xEnd = W - PAD_R;
+    const yHi = y(last * (1 + cone.p90_move_pct / 100));
+    const yLo = y(last * (1 + cone.p10_move_pct / 100));
+    const yMid = y(last * (1 + cone.median_move_pct / 100));
+    const yNow = y(last);
+    svg.appendChild(svgEl("path", {                      // p10–p90 cone
+      d: `M${xNow},${yNow} L${xEnd},${yHi} L${xEnd},${yLo} Z`,
+      class: `cone ${cone.direction}`,
+    }));
+    svg.appendChild(svgEl("line", {                      // median path
+      x1: xNow, y1: yNow, x2: xEnd, y2: yMid, class: `cone-mid ${cone.direction}`,
+    }));
+  }
+  return svg;
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
-  {
-    id: "prediction", title: "Prediction Summary", wide: true,
-    async render(body) {
-      const d = await getJSON("prediction");
-      if (!d.predictions.length) return void (body.innerHTML = emptyNote("No prediction yet — run the analysis job."));
-      const head = el("div", "dim", `China session ${esc(d.trade_date || "—")}`);
-      body.innerHTML = "";
-      body.appendChild(head);
-      for (const p of d.predictions) {
-        const row = el("div", "pred");
-        row.innerHTML =
-          `<div class="pred-top">
-             <span class="sector">${esc(p.sector)}</span>
-             ${tag(p.direction)}
-             <span class="conf ${esc(p.confidence)}">${esc(p.confidence)} conf</span>
-             <span class="score">${Number(p.composite_score).toFixed(2)}</span>
-           </div>
-           <div class="rationale">${esc(p.rationale)}</div>`;
-        body.appendChild(row);
-      }
-    },
-  },
   {
     id: "report", title: "Daily Action Report", wide: true,
     async render(body) {
@@ -111,6 +170,67 @@ const PANELS = [
         if (!items.length) continue;
         body.appendChild(el("div", "rep-head " + cls, esc(label)));
         for (const m of items) body.appendChild(reportItem(m));
+      }
+    },
+  },
+  {
+    id: "charts", title: "Sector Charts + Forecast Cone", wide: true,
+    async render(body) {
+      const d = await getJSON("charts");
+      const secs = d.sectors || {};
+      if (!Object.keys(secs).length) return void (body.innerHTML = emptyNote("No price history yet."));
+      body.innerHTML = "";
+      for (const [sector, s] of Object.entries(secs)) {
+        const wrap = el("div", "chartbox");
+        const f = s.forecast;
+        const head = el("div", "pred-top");
+        head.innerHTML =
+          `<span class="sector">${esc(sector)}</span>
+           <span class="badge">${esc(s.symbol)}</span>
+           ${s.call ? tag(s.call) : ""}
+           <span class="repdir dim">${esc(s.technical_note || "")}</span>`;
+        wrap.appendChild(head);
+        wrap.appendChild(drawChart(s.bars || [], { hasOhlc: s.has_ohlc, forecast: f }));
+        const note = el("div", "rationale");
+        if (f && f.enough) {
+          note.innerHTML =
+            `next session (from ${f.n} past days with this same call): median ` +
+            `<b>${f.median_move_pct > 0 ? "+" : ""}${f.median_move_pct}%</b>, ` +
+            `10–90% range ${f.p10_move_pct}% to ${f.p90_move_pct}%` +
+            (f.hit_rate != null ? ` · ${(f.hit_rate * 100).toFixed(0)}% right` : "");
+        } else {
+          note.textContent = s.has_ohlc
+            ? "No forecast range yet — not enough scored history for this call."
+            : "Close-only history (no candles yet) — re-run the backfill to load OHLC.";
+        }
+        wrap.appendChild(note);
+        body.appendChild(wrap);
+      }
+      body.appendChild(el("div", "rationale",
+        "The cone is the measured 10–90% range of what actually happened on past days " +
+        "with this call — not a predicted candlestick. We have no intraday data, so a " +
+        "drawn future bar would be invented precision."));
+    },
+  },
+  {
+    id: "prediction", title: "Prediction Summary", wide: true,
+    async render(body) {
+      const d = await getJSON("prediction");
+      if (!d.predictions.length) return void (body.innerHTML = emptyNote("No prediction yet — run the analysis job."));
+      const head = el("div", "dim", `China session ${esc(d.trade_date || "—")}`);
+      body.innerHTML = "";
+      body.appendChild(head);
+      for (const p of d.predictions) {
+        const row = el("div", "pred");
+        row.innerHTML =
+          `<div class="pred-top">
+             <span class="sector">${esc(p.sector)}</span>
+             ${tag(p.direction)}
+             <span class="conf ${esc(p.confidence)}">${esc(p.confidence)} conf</span>
+             <span class="score">${Number(p.composite_score).toFixed(2)}</span>
+           </div>
+           <div class="rationale">${esc(p.rationale)}</div>`;
+        body.appendChild(row);
       }
     },
   },

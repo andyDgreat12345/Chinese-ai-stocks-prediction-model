@@ -24,6 +24,7 @@ ENDPOINTS = {
     "llm-calls": server.llm_calls,
     "llm-usage": server.llm_usage,
     "learning": server.learning,
+    "charts": lambda: server.charts(days=90),
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

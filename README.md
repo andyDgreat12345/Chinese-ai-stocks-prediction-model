@@ -263,6 +263,26 @@ Three layers make the analysis specific and technical instead of broad:
   follower and to lean on domestic technicals/news for a diverger (e.g. AI-type
   themes that move on their own catalysts). Surfaced per sector in the daily report.
 
+## Website: charts, candles, and the forecast cone
+
+The dashboard leads with the **Daily Action Report** (the same read that's emailed),
+followed by **Sector Charts + Forecast Cone**:
+
+- **Real candlesticks** where OHLC exists (`open`/`high`/`low` are ingested and
+  backfilled alongside the close). Where a source gave only closes, the chart
+  draws a **line instead of inventing a bar**.
+- **A forecast cone**, not a predicted candlestick. Its width is the *measured*
+  10–90% range of what actually happened on past days when the model made this
+  same call for this sector (`analysis/forecast.py`), so it widens honestly when
+  the edge is weak. Each sector also reports `median +0.60%, 10–90% range -1.65%
+  to +3.00% (n=101)`.
+
+> **Why no predicted candlestick.** A candle encodes open/high/low/close, which
+> means an intraday path — and we ingest **one close per day**, no intraday data
+> at all. Drawing a future bar would fabricate three of its four numbers on top of
+> a ~55%-accuracy directional signal. The cone shows the same idea using only
+> numbers we have actually measured.
+
 ## The learning loop (`oracle/learning/` — how accuracy actually improves)
 
 The reflection log describes what went wrong; this *fixes* it. Every afternoon,

@@ -51,6 +51,12 @@ def normalize(latest_by_symbol: dict[str, list[float]], fetched_at: str,
     `sector_tags` maps each symbol to its logical China sector."""
     rows = []
     for symbol, series in latest_by_symbol.items():
+        # A value may be a bare close list (legacy) or {"closes": [...],
+        # "ohlc": {...}} when the source also gave us the day's bar.
+        bar = {}
+        if isinstance(series, dict):
+            bar = series.get("ohlc") or {}
+            series = series.get("closes") or []
         vals = [v for v in series if v is not None]
         if not vals:
             continue
@@ -63,6 +69,7 @@ def normalize(latest_by_symbol: dict[str, list[float]], fetched_at: str,
             "symbol": symbol,
             "sector": sector_tags.get(symbol),
             "close": round(last, 4),
+            "open": bar.get("open"), "high": bar.get("high"), "low": bar.get("low"),
             "pct_change": pct,
             "fetched_at": fetched_at,
         })
@@ -139,16 +146,22 @@ def _to_records(df) -> list[dict]:
         return list(df) if df else []
 
 
-def _collect(codes: list[str], downloader) -> dict[str, list[float]]:
-    """Download each code, extract its last two closes, fail soft per symbol."""
-    latest: dict[str, list[float]] = {}
+def _collect(codes: list[str], downloader) -> dict[str, dict]:
+    """Download each code and keep its last two closes plus the latest day's OHLC
+    bar (for candlestick rendering). Fail soft per symbol."""
+    from ..backfill import extract_dated_ohlc
+
+    latest: dict[str, dict] = {}
     for code in codes:
         try:
-            series = pick_close_series(_to_records(downloader(code)))
-            latest[code] = series[-2:]
+            records = _to_records(downloader(code))
+            closes = pick_close_series(records)
+            bars = extract_dated_ohlc(records)
+            latest[code] = {"closes": closes[-2:],
+                            "ohlc": bars[-1][1] if bars else {}}
         except Exception as e:  # noqa: BLE001
             print(f"fetch_china_close: {code} failed: {e!r}")
-            latest[code] = []
+            latest[code] = {"closes": [], "ohlc": {}}
     return latest
 
 
