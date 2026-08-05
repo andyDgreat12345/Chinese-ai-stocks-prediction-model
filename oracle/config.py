@@ -117,10 +117,40 @@ SECTOR_STOCKS = {
     ],
 }
 
+# English/global feeds — the foreign-investor view of the market.
+# The previous two entries (feeds.reuters.com, caixinglobal.com) were BOTH dead:
+# Reuters retired its public RSS endpoint and the Caixin Global URL 404s. Because
+# ingestion fails soft per source, nothing ever errored — the news table just sat
+# at zero rows. Verified live 2026-08-05; re-verify by item count, not HTTP status.
 NEWS_FEEDS = {
-    "reuters": "https://feeds.reuters.com/reuters/businessNews",
-    "caixin": "https://www.caixinglobal.com/rss/economics.xml",
-    # Bloomberg often needs a workaround — left as a Phase-2 open decision (spec §7).
+    "ft_markets": "https://www.ft.com/markets?format=rss",
+    # China economy in English — the direct replacement for Caixin Global.
+    "scmp_economy": "https://www.scmp.com/rss/92/feed",
+    "guardian_business": "https://www.theguardian.com/uk/business/rss",
+}
+
+# Chinese-language domestic financial media. These matter more than the English
+# feeds above for A-shares: the market is ~97% domestically owned and >80% retail
+# by volume, and the literature finds domestic investors rely on Chinese/state
+# media while foreign investors rely on global sources. The feeds above describe
+# the market to the wrong audience; these are what the actual price-setters read.
+# Fail-soft per source — a blocked or dead feed is skipped, never fatal.
+# Every URL here was verified live (2026-08-05): fetched, XML-parsed, item count
+# >0, and pubDate within the current day. That bar exists because two weaker ones
+# are easy to trip over — sina's roll feed returns HTTP 200 with a boilerplate
+# body and ZERO items, and sina's focus feed returns 15 well-formed items dated
+# 2018. Neither raises, so "the fetch succeeded" proves nothing; only a dated,
+# non-empty item list does. Re-verify the same way before adding a source.
+NEWS_FEEDS_ZH = {
+    # Market/sector commentary — closest to the signal we want ("沪指涨1.47%
+    # 科创50指数大涨4.78% 半导体板块爆发"). ~98 items/day.
+    "eastmoney_market": "http://rss.eastmoney.com/rss_partener.xml",
+    # Single-name flow: institutional visits, company announcements. ~90/day.
+    "eastmoney_stock": "http://rss.eastmoney.com/rss_stock.xml",
+    # Policy and macro framing from state media. ~30/day.
+    # (The same publisher's scroll-news feed was trialled and dropped: 25 general
+    # headlines, every one scoring neutral — volume without signal.)
+    "chinanews_finance": "https://www.chinanews.com.cn/rss/finance.xml",
 }
 
 # ── Reflection loop guards (spec §4b) ────────────────────────────────────

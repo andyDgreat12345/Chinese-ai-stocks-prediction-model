@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .. import config
-from ..analysis.sentiment import analyze
+from ..analysis.sentiment import analyze, analyze_any
 from ..db import insert_news
 from ._retry import with_retries
 
@@ -47,7 +47,10 @@ def parse_feed(source: str, parsed_feed, fetched_at: str,
         if not headline:
             continue
         summary = _first_paragraph(e if isinstance(e, dict) else vars(e))
-        sig = analyze(headline, summary)
+        # Route by language: Chinese headlines score on the Chinese
+        # lexicon, everything else on the English one. Both emit the
+        # same category vocabulary, so downstream aggregation is unified.
+        sig = analyze_any(headline, summary)
         rows.append({
             "trade_date": trade_date,
             "source": source,
@@ -60,9 +63,24 @@ def parse_feed(source: str, parsed_feed, fetched_at: str,
     return rows
 
 
-def fetch_world_news(feeds: dict[str, str] | None = None) -> int:
-    """Job entrypoint: pull every feed, tag, persist. Never raises."""
-    feeds = feeds or config.NEWS_FEEDS
+def fetch_world_news(feeds: dict[str, str] | None = None,
+                     include_chinese: bool = True) -> int:
+    """Job entrypoint: pull every feed, tag, persist. Never raises.
+
+    By default this covers BOTH the English/global feeds and the Chinese-language
+    domestic feeds (config.NEWS_FEEDS_ZH). The Chinese sources matter more for
+    A-shares — the market is ~97% domestically owned and >80% retail by volume,
+    and domestic investors read domestic media. Each source fails soft on its own,
+    so a blocked feed costs that source's headlines and nothing else."""
+    if feeds is None:
+        # Default set = English/global + Chinese domestic.
+        feeds = dict(config.NEWS_FEEDS)
+        if include_chinese:
+            feeds.update(config.NEWS_FEEDS_ZH)
+    else:
+        # An explicit feed map is honoured verbatim — callers that name their
+        # sources get exactly those, not those plus a silent Chinese merge.
+        feeds = dict(feeds)
     now = datetime.now(timezone.utc)
     fetched_at = now.isoformat()
     trade_date = now.date().isoformat()
