@@ -113,7 +113,12 @@ jobs:
               python -m oracle.backfill 365
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
-              python -m oracle.backtest ;;
+              python -m oracle.backtest
+              # Fit the trader's exit rules on a holdout the search never saw.
+              # Reports a verdict only; nothing is auto-applied to the live rules.
+              python -m oracle.simulator.tune > rule_tuning.md || true
+              cat rule_tuning.md || true
+              cp rule_tuning.md _state/rule_tuning.md || true ;;
             research)                    # wide US<->China correlation sweep + report
               python -m oracle.research.run 400 --out research_report.md
               cp research_report.md _state/research_report.md
