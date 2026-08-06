@@ -25,6 +25,7 @@ over the same window** — a strategy that beats nothing is not a strategy.
 """
 from __future__ import annotations
 
+from . import ranking as rk
 from . import trader as tr
 from .trader import Position, PortfolioState, Trade, TraderRules
 
@@ -37,12 +38,19 @@ def _fill_price(bar: dict) -> float | None:
 
 def simulate(calls_by_date: dict, bars: dict, dates: list[str],
              rules: TraderRules | None = None,
-             starting_cash: float = 100_000.0) -> dict:
+             starting_cash: float = 100_000.0,
+             edge_book=None, edge_floor: float = 0.0) -> dict:
     """Run the simulation.
 
     ``calls_by_date``: {date: [ {sector, symbol, direction, confidence}, ... ]}
     ``bars``:          {symbol: {date: {o,h,l,c}}}
     ``dates``:         the ordered session calendar to walk.
+    ``edge_book``:     optional ``ranking.EdgeBook``. When given, contested slots
+                       go to the sector with the best edge measured on records
+                       STRICTLY BEFORE the session being traded. Without it the
+                       original config order is preserved, so the ranking's
+                       effect stays measurable against an unranked baseline.
+    ``edge_floor``:    when > 0, refuse candidates below this measured edge.
     """
     rules = rules or TraderRules()
     st = PortfolioState(cash=starting_cash)
@@ -65,7 +73,11 @@ def simulate(calls_by_date: dict, bars: dict, dates: list[str],
 
         # ── 2. consider new entries ───────────────────────────────────────
         equity = _equity(st, bars, date)
-        for call in calls_by_date.get(date, []):
+        todays = calls_by_date.get(date, [])
+        if edge_book is not None:
+            todays = rk.edge_floor_filter(todays, edge_book, date, edge_floor)
+            todays = rk.rank_calls(todays, edge_book, date)
+        for call in todays:
             if not tr.wants_entry(call, rules, set(st.positions)):
                 continue
             bar = bars.get(call["symbol"], {}).get(date)
