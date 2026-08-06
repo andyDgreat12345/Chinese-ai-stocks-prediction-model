@@ -71,6 +71,14 @@ def main(argv: list[str]) -> int:
     print(f"simulating {len(dates)} sessions, {len(bars)} instruments\n")
     result = engine.simulate(calls, bars, dates, rules, cash)
     print(engine.format_report(result))
+
+    # With more candidates than slots, the order they are listed in silently
+    # decides who gets filled. Always report how much of the result that is.
+    if "--no-order-check" not in argv:
+        from . import ranking as rk
+        print()
+        print(rk.format_order_sensitivity(
+            rk.order_sensitivity(calls, bars, dates, rules, cash)))
     return 0
 
 
