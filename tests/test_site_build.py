@@ -34,7 +34,8 @@ def test_site_build_writes_snapshots_and_relative_index(monkeypatch, tmp_path):
                  "news-impact", "health"):
         assert (out / "api" / f"{name}.json").exists(), name
     pred = json.loads((out / "api" / "prediction.json").read_text())
-    assert len(pred["predictions"]) == 5
+    from oracle.analysis.pipeline import CHINA_SECTORS
+    assert len(pred["predictions"]) == len(CHINA_SECTORS)
 
     # the daily action report snapshot is present and bucketed
     rep = json.loads((out / "api" / "report.json").read_text())

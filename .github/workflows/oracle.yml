@@ -110,6 +110,13 @@ jobs:
           phase="${{ steps.phase.outputs.phase }}"
           case "$phase" in
             backfill)                    # one-time: load history, then show the backtest
+              # Verify every configured ETF code resolves BEFORE backfilling.
+              # Ingestion fails soft per symbol, so an unverified code leaves a
+              # sector silently unscored rather than erroring. Non-fatal: the
+              # report names the dead codes and the backfill still runs for the
+              # rest.
+              python -m oracle.ingestion.china_market --verify | tee etf_verify.md || true
+              cp etf_verify.md _state/etf_verify.md || true
               python -m oracle.backfill 365
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log

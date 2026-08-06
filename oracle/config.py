@@ -44,7 +44,8 @@ JOB_SCHEDULE = {
 
 # ── Data-source universe (spec §3) ───────────────────────────────────────
 US_INDICES = ["^GSPC", "^IXIC", "^DJI"]                 # S&P500, Nasdaq, Dow
-US_SECTOR_ETFS = ["XLE", "XLF", "SOXX"]                 # energy, financials, semis
+# energy, financials, semis + the spillover sources for the added China sectors.
+US_SECTOR_ETFS = ["XLE", "XLF", "SOXX", "XLV", "XLP", "XLI"]
 PRECIOUS_METALS = ["GC=F", "SI=F"]                      # gold, silver
 CHINA_INDICES = {
     "SSE": "sh000001",       # SSE Composite
@@ -64,6 +65,19 @@ CHINA_SECTOR_ETFS = {
     "semis": "512480",       # Semiconductor ETF
     "energy": "159930",      # Energy ETF
     "financials": "512800",  # Bank/financials ETF
+    # Added to widen the tradeable universe. Trade count is the binding
+    # constraint on verifying anything here: at ~174 trades per 18 months,
+    # confirming a genuine 51%->55% win rate would take about seven years.
+    # Doubling the instruments roughly halves that wait.
+    # Verify every code with `python -m oracle.ingestion.china_market --verify`
+    # before trusting it — ingestion fails soft per symbol, so a wrong or
+    # renamed code leaves that sector silently unscored rather than erroring.
+    "healthcare": "512170",  # 医疗ETF — healthcare/medical devices
+    "consumer": "159928",    # 消费ETF — major consumer staples
+    "brokers": "512880",     # 证券ETF — brokers, the most policy-sensitive book
+    "defense": "512660",     # 军工ETF — defense; domestically driven, a genuine
+                             #   divergence candidate rather than a US follower
+    "newenergy": "515030",   # 新能源车ETF — EV/battery chain
 }
 
 # Foreign-accessible instrument each sector maps to — what a non-mainland
@@ -79,6 +93,16 @@ SECTOR_TRADEABLE_ETF = {
     "semis": "KWEB",        # no pure US-listed China-semis ETF — tech/internet proxy
     "energy": "FXI",        # large-cap, energy majors included (loose proxy)
     "financials": "FXI",    # large-cap, financials-heavy
+    # The added sectors have no close US-listed analogue at all — these are
+    # broad-China funds standing in for a narrow domestic theme, so the label is
+    # weaker here than above. Read them as "roughly this part of China", not as a
+    # tracking instrument.
+    "healthcare": "MCHI",   # broad China; no US-listed China-healthcare fund
+    "consumer": "MCHI",     # broad China; CHIQ is discretionary-only
+    "brokers": "FXI",       # large-cap financials-heavy
+    "defense": "MCHI",      # no US-listed analogue; A-share defense is not
+                            #   foreign-accessible in any close form
+    "newenergy": "KWEB",    # loose — KWEB is internet, not EV/battery
 }
 
 # Curated single-name watchlist per sector — liquid, recognizable China names the
@@ -114,6 +138,31 @@ SECTOR_STOCKS = {
         {"ticker": "601398.SS", "name": "ICBC", "tradeable": "HK:1398"},
         {"ticker": "601288.SS", "name": "Agricultural Bank of China", "tradeable": "HK:1288"},
         {"ticker": "601318.SS", "name": "Ping An Insurance", "tradeable": "HK:2318"},
+    ],
+    "healthcare": [
+        {"ticker": "600276.SS", "name": "Jiangsu Hengrui Pharma", "tradeable": "HK:1276"},
+        {"ticker": "300760.SZ", "name": "Mindray Medical", "tradeable": ""},
+        {"ticker": "603259.SS", "name": "WuXi AppTec", "tradeable": "HK:2359"},
+    ],
+    "consumer": [
+        {"ticker": "600519.SS", "name": "Kweichow Moutai", "tradeable": ""},
+        {"ticker": "000858.SZ", "name": "Wuliangye Yibin", "tradeable": ""},
+        {"ticker": "600887.SS", "name": "Inner Mongolia Yili", "tradeable": ""},
+    ],
+    "brokers": [
+        {"ticker": "600030.SS", "name": "CITIC Securities", "tradeable": "HK:6030"},
+        {"ticker": "601211.SS", "name": "Guotai Junan Securities", "tradeable": "HK:2611"},
+        {"ticker": "300059.SZ", "name": "East Money Information", "tradeable": ""},
+    ],
+    "defense": [
+        {"ticker": "600760.SS", "name": "AVIC Shenyang Aircraft", "tradeable": ""},
+        {"ticker": "000768.SZ", "name": "AVIC Xi'an Aircraft", "tradeable": ""},
+        {"ticker": "600893.SS", "name": "AECC Aviation Power", "tradeable": ""},
+    ],
+    "newenergy": [
+        {"ticker": "300750.SZ", "name": "CATL", "tradeable": ""},
+        {"ticker": "002594.SZ", "name": "BYD", "tradeable": "HK:1211"},
+        {"ticker": "300274.SZ", "name": "Sungrow Power", "tradeable": ""},
     ],
 }
 

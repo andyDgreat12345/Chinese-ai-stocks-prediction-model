@@ -18,7 +18,8 @@ from .. import config, db
 from .scoring import SectorSignals, score_sector
 
 # China sectors we produce a directional read for (v1 universe).
-CHINA_SECTORS = ["broad", "growth", "semis", "energy", "financials"]
+CHINA_SECTORS = ["broad", "growth", "semis", "energy", "financials",
+                 "healthcare", "consumer", "brokers", "defense", "newenergy"]
 
 # Which US sector tags spill over into each China sector (spec §4.1). This is
 # the v1 *assumption*; the reflection loop (§4b-ii) replaces it with measured
@@ -29,6 +30,15 @@ CHINA_SPILLOVER_SOURCES: dict[str, list[str]] = {
     "semis": ["semis", "tech"],
     "energy": ["energy"],
     "financials": ["financials"],
+    "healthcare": ["healthcare"],
+    "consumer": ["staples"],
+    "brokers": ["financials"],
+    # Deliberately mapped to industrials rather than "broad": A-share defense is
+    # driven by domestic procurement and policy, so if the divergence hypothesis
+    # is right this sector should show a WEAK US link. Mapping it to a broad
+    # index would manufacture a correlation that is really just market beta.
+    "defense": ["industrials"],
+    "newenergy": ["tech", "energy"],
 }
 
 # News categories that bear on each China sector (spec §4b-ii buckets).
@@ -38,6 +48,11 @@ SECTOR_NEWS_CATEGORIES: dict[str, list[str]] = {
     "semis": ["chip_export", "tariffs"],
     "energy": ["macro_data", "tariffs"],
     "financials": ["fed_policy", "china_stimulus"],
+    "healthcare": ["china_stimulus", "macro_data"],
+    "consumer": ["china_stimulus", "macro_data"],
+    "brokers": ["china_stimulus", "fed_policy"],
+    "defense": ["tariffs", "china_stimulus"],
+    "newenergy": ["china_stimulus", "tariffs", "chip_export"],
 }
 
 # A US daily move of this magnitude (%) counts as a full-strength (±1) signal.

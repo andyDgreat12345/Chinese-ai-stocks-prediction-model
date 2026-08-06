@@ -191,3 +191,62 @@ def fetch_china_close(
     except Exception as e:  # noqa: BLE001
         print(f"fetch_china_close FAILED: {e!r}")
         return 0
+
+
+# ── code verification ─────────────────────────────────────────────────────
+def verify_sector_etfs(etfs: dict[str, str] | None = None) -> dict:
+    """Check that every configured ETF code actually resolves to price history.
+
+    This exists because the ingestion job fails soft *per symbol*: a wrong or
+    renamed code does not raise, it just leaves that sector permanently unscored
+    with a line in a log nobody reads. The same silent-inertness cost us the
+    entire news layer, where every configured feed was dead for months while the
+    job reported success. A code is only trusted once it returns rows.
+
+    Returns {sector: {"code", "ok", "bars", "error"}}. Never raises.
+    """
+    etfs = etfs or config.CHINA_SECTOR_ETFS
+    out: dict[str, dict] = {}
+    for sector, code in etfs.items():
+        entry = {"code": code, "ok": False, "bars": 0, "error": None}
+        try:
+            df = download_etf_history(code)
+            rows = _to_records(df)
+            closes = pick_close_series(rows)
+            entry["bars"] = len(closes)
+            entry["ok"] = len(closes) > 0
+            if not entry["ok"]:
+                entry["error"] = "resolved but returned no usable closes"
+        except Exception as e:  # noqa: BLE001
+            entry["error"] = f"{type(e).__name__}: {e}"
+        out[sector] = entry
+    return out
+
+
+def format_verification(result: dict) -> str:
+    ok = [s for s, r in result.items() if r["ok"]]
+    bad = [s for s, r in result.items() if not r["ok"]]
+    lines = ["China sector-ETF code verification", ""]
+    for sector, r in sorted(result.items()):
+        mark = "ok  " if r["ok"] else "DEAD"
+        detail = f"{r['bars']} bars" if r["ok"] else (r["error"] or "no data")
+        lines.append(f"  [{mark}] {sector:12} {r['code']:8} {detail}")
+    lines += ["", f"  {len(ok)}/{len(result)} codes resolved."]
+    if bad:
+        lines.append(f"  UNRESOLVED: {', '.join(sorted(bad))} — these sectors will be "
+                     "silently unscored until the codes are corrected.")
+    return "\n".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    if "--verify" in argv:
+        result = verify_sector_etfs()
+        print(format_verification(result))
+        return 0 if all(r["ok"] for r in result.values()) else 1
+    print(f"fetch_china_close: wrote {fetch_china_close()} rows")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    raise SystemExit(main(sys.argv[1:]))

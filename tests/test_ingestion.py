@@ -130,3 +130,71 @@ def test_parse_feed_tags_sentiment_and_category():
     assert rows[0]["category"] == "fed_policy"
     assert rows[0]["sentiment"] > 0
     assert "<" not in rows[0]["summary"]  # HTML stripped
+
+
+# ── sector universe consistency ───────────────────────────────────────────
+def test_every_sector_is_fully_configured():
+    """A half-added sector fails silently: it would be predicted but never
+    scored, or scored but never traded. Every map must cover every sector."""
+    from oracle import config
+    from oracle.analysis.pipeline import (CHINA_SECTORS, CHINA_SPILLOVER_SOURCES,
+                                          SECTOR_NEWS_CATEGORIES)
+
+    for name, mapping in (("CHINA_SECTOR_ETFS", config.CHINA_SECTOR_ETFS),
+                          ("SECTOR_TRADEABLE_ETF", config.SECTOR_TRADEABLE_ETF),
+                          ("SECTOR_STOCKS", config.SECTOR_STOCKS),
+                          ("CHINA_SPILLOVER_SOURCES", CHINA_SPILLOVER_SOURCES),
+                          ("SECTOR_NEWS_CATEGORIES", SECTOR_NEWS_CATEGORIES)):
+        missing = [s for s in CHINA_SECTORS if s not in mapping]
+        assert not missing, f"{name} missing: {missing}"
+
+
+def test_etf_codes_are_unique_per_sector():
+    """Two sectors sharing a code would be the same instrument twice — the
+    simulator would treat them as independent positions."""
+    from oracle import config
+
+    codes = list(config.CHINA_SECTOR_ETFS.values())
+    assert len(codes) == len(set(codes))
+
+
+def test_every_spillover_source_is_actually_ingested():
+    """A China sector mapped to a US tag we never fetch gets a permanently zero
+    spillover signal — dead on arrival, and invisible."""
+    from oracle.analysis.pipeline import CHINA_SPILLOVER_SOURCES
+    from oracle.ingestion.us_market import SECTOR_TAGS
+
+    available = set(SECTOR_TAGS.values())
+    for sector, tags in CHINA_SPILLOVER_SOURCES.items():
+        unknown = [t for t in tags if t not in available]
+        assert not unknown, f"{sector} maps to un-ingested US tag(s): {unknown}"
+
+
+# ── ETF code verification ─────────────────────────────────────────────────
+def test_verify_reports_dead_codes(monkeypatch):
+    from oracle.ingestion import china_market as cm
+
+    def fake(code):
+        if code == "BAD":
+            raise OSError("no such fund")
+        return [{"close": 1.0}, {"close": 2.0}]
+
+    monkeypatch.setattr(cm, "download_etf_history", fake)
+    monkeypatch.setattr(cm, "_to_records", lambda df: df)
+    res = cm.verify_sector_etfs({"good": "510300", "broken": "BAD"})
+    assert res["good"]["ok"] and res["good"]["bars"] == 2
+    assert not res["broken"]["ok"] and "no such fund" in res["broken"]["error"]
+    report = cm.format_verification(res)
+    assert "UNRESOLVED" in report and "broken" in report
+
+
+def test_verify_flags_a_code_that_resolves_but_is_empty(monkeypatch):
+    """The nastier case: the endpoint answers, but with nothing in it — exactly
+    how the dead news feeds passed as healthy."""
+    from oracle.ingestion import china_market as cm
+
+    monkeypatch.setattr(cm, "download_etf_history", lambda code: [])
+    monkeypatch.setattr(cm, "_to_records", lambda df: [])
+    res = cm.verify_sector_etfs({"hollow": "999999"})
+    assert not res["hollow"]["ok"]
+    assert "no usable closes" in res["hollow"]["error"]
