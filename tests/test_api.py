@@ -42,7 +42,9 @@ def test_health(client):
 def test_prediction_has_disclaimer_and_signals(client):
     body = client.get("/api/prediction").json()
     assert body["disclaimer"]                       # spec §0/§5: always present
-    assert len(body["predictions"]) == 5
+    from oracle.analysis.pipeline import CHINA_SECTORS
+    # Bound to the configured universe, not a literal — the sector list grows.
+    assert len(body["predictions"]) == len(CHINA_SECTORS)
     semis = next(p for p in body["predictions"] if p["sector"] == "semis")
     assert semis["direction"] == "bullish"
     assert "us_spillover" in semis["signals"]       # component signals exposed

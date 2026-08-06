@@ -18,6 +18,8 @@ SECTOR_TAGS = {
     "^GSPC": "broad", "^IXIC": "tech", "^DJI": "broad",
     "XLE": "energy", "XLF": "financials", "SOXX": "semis",
     "GC=F": "gold", "SI=F": "silver",
+    # Spillover sources for the added China sectors.
+    "XLV": "healthcare", "XLP": "staples", "XLI": "industrials",
 }
 
 SYMBOLS = config.US_INDICES + config.US_SECTOR_ETFS + config.PRECIOUS_METALS
