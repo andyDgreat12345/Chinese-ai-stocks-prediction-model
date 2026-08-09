@@ -23,8 +23,14 @@ from . import sweep as sw
 from . import universe as uni
 
 
-def backfill_research_universe(days: int = 400) -> int:
-    """Load history for every research US symbol (fail-soft per symbol)."""
+def backfill_research_universe(days: int = 0) -> int:
+    """Load history for every research US symbol (fail-soft per symbol).
+
+    ``days=0`` (the default) pulls full available history. Every US<->China
+    pairing is bounded by whichever leg is shorter, so leaving this at 400 while
+    the China side carries thousands of bars would cap the sweep at 400 no matter
+    how much China history exists.
+    """
     from ..backfill import (
         _download_us, _trim_days, _us_records, extract_dated_ohlc, ohlc_to_rows,
     )

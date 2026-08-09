@@ -135,8 +135,22 @@ def series_to_rows(symbol: str, sector: str | None,
     return rows
 
 
+# Sentinel for "keep every bar the source returned".
+ALL_HISTORY = 0
+
+
 def _trim_days(series: list[tuple[str, float]], days: int) -> list[tuple[str, float]]:
-    return series[-(days + 1):] if days and len(series) > days + 1 else series
+    """Keep the last `days` bars (+1 so the first has a prior close for its %
+    change). ``days <= 0`` keeps everything.
+
+    The default used to discard most of what had already been downloaded: the
+    ETF endpoints return full history — 1,559 to 3,557 bars per fund — and a
+    365-day trim stored 371. That is 4-9x the training data thrown away after
+    paying the network cost for it.
+    """
+    if not days or days <= 0:
+        return series
+    return series[-(days + 1):] if len(series) > days + 1 else series
 
 
 # ── network fetch (isolated, fail-soft) ──────────────────────────────────
@@ -144,7 +158,12 @@ def _trim_days(series: list[tuple[str, float]], days: int) -> list[tuple[str, fl
 def _download_us(symbol: str, days: int):
     import yfinance as yf
 
-    return yf.download(symbol, period=f"{days}d", interval="1d",
+    # yfinance caps a "<n>d" period well short of a full listing history, so
+    # ask for "max" whenever we want everything. Without this the US side would
+    # silently stay short while the China side went long, and every pairing is
+    # limited by whichever leg is shorter.
+    period = "max" if not days or days <= 0 else f"{days}d"
+    return yf.download(symbol, period=period, interval="1d",
                        auto_adjust=False, progress=False)
 
 
@@ -242,12 +261,17 @@ def backfill(days: int = 180) -> int:
     from .db import init_db
     init_db()
     n = backfill_us(days) + backfill_china(days)
-    print(f"backfill: {n} total rows for ~{days} days. Now run: python -m oracle.backtest")
+    span = "all available history" if not days or days <= 0 else f"~{days} days"
+    print(f"backfill: {n} total rows for {span}. Now run: python -m oracle.backtest")
     return n
 
 
 def main(argv: list[str]) -> int:
-    days = int(argv[0]) if argv else 180
+    """``python -m oracle.backfill [days|all|0]`` — 'all' pulls full history."""
+    if argv and argv[0].lower() in ("all", "max", "full"):
+        days = ALL_HISTORY
+    else:
+        days = int(argv[0]) if argv else 180
     backfill(days)
     return 0
 
