@@ -116,6 +116,9 @@ jobs:
               # report names the dead codes and the backfill still runs for the
               # rest.
               python -m oracle.ingestion.china_market --verify | tee etf_verify.md || true
+              # Bars beyond the ±10% daily band are corporate actions, not price
+              # action, and both the backtest and simulator score them as real.
+              python -c "from oracle.ingestion.china_market import implausible_moves, format_quality_report; print(format_quality_report(implausible_moves()))" | tee -a etf_verify.md || true
               cp etf_verify.md _state/etf_verify.md || true
               # Ten years. Deeper reached 1990, where the model scores 49.7% —
               # pre-2010 China had no sector ETFs and no US coupling, so that
@@ -142,6 +145,11 @@ jobs:
               # Does Chinese news sentiment predict the next session? Reports
               # "not measured yet" plus a detectability table until the history
               # is long enough — never an empty result posing as a null one.
+              # Conditional (marginal) analysis: is the tradeable segment
+              # predictable under any pre-registered condition? FDR-corrected.
+              python -m oracle.research.marginal > marginal_report.md || true
+              cat marginal_report.md || true
+              cp marginal_report.md _state/marginal_report.md || true
               python -m oracle.research.news_signal > news_signal_report.md || true
               cp news_signal_report.md _state/news_signal_report.md || true ;;
             *)                           # morning / afternoon / all daily jobs

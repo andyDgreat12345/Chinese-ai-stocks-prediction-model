@@ -107,7 +107,12 @@ def _etf_hist_em(code: str):
     connections from some datacenter IPs — see the Sina fallback)."""
     import akshare as ak
 
-    return ak.fund_etf_hist_em(symbol=code, period="daily", adjust="")
+    # "qfq" = forward-adjusted. Unadjusted prices make a fund's share conversion
+    # (份额折算) look like a -75% market move: 159928 shows -74.47% on 2021-06-25,
+    # 512170 -68.10% on 2021-02-25. Those are accounting events, not price action,
+    # and the backtest scored them as real outcomes while the simulator took the
+    # loss. 28 stored bars exceeded the +/-10% ETF daily limit this way.
+    return ak.fund_etf_hist_em(symbol=code, period="daily", adjust="qfq")
 
 
 @with_retries(attempts=2, base_delay=2.0)
@@ -263,3 +268,48 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     import sys
     raise SystemExit(main(sys.argv[1:]))
+
+
+# ── data quality ──────────────────────────────────────────────────────────
+# A-share ETFs trade within a 10% daily band. Anything past this is a corporate
+# action, a bad print, or an unadjusted split — never a market move.
+PLAUSIBLE_DAILY_LIMIT_PCT = 11.0
+
+
+def implausible_moves(db_path=None, limit_pct: float = PLAUSIBLE_DAILY_LIMIT_PCT,
+                      table: str = "china_close") -> list[dict]:
+    """Stored bars whose daily move exceeds what the market mechanically allows.
+
+    These are silent poison: 0.3% of rows, but a single -75% "move" dominates any
+    return statistic it lands in, and both the backtest and the simulator treat
+    it as a real outcome. Detection is deliberately independent of the fetch path,
+    because the Sina fallback cannot serve adjusted prices at all — fixing the
+    Eastmoney request is not sufficient on its own.
+    """
+    from ..db import connect
+
+    conn = connect(db_path)
+    try:
+        rows = conn.execute(
+            f"""SELECT trade_date, symbol, sector, close, pct_change FROM {table}
+                WHERE pct_change IS NOT NULL AND ABS(pct_change) > ?
+                ORDER BY ABS(pct_change) DESC""", (limit_pct,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def format_quality_report(rows: list[dict], limit_pct: float = PLAUSIBLE_DAILY_LIMIT_PCT) -> str:
+    L = [f"China bar quality — moves beyond the ±{limit_pct:.0f}% daily band", ""]
+    if not rows:
+        L.append("  none. Every stored bar is within what the market allows.")
+    else:
+        L.append(f"  {len(rows)} implausible bar(s) — these are corporate actions or bad")
+        L.append("  prints, and both the backtest and the simulator score them as real:")
+        L.append("")
+        for r in rows[:20]:
+            L.append(f"    {r['trade_date']}  {r['symbol']:8} {str(r['sector']):11} "
+                     f"{r['pct_change']:+8.2f}%")
+        if len(rows) > 20:
+            L.append(f"    ... and {len(rows) - 20} more")
+    return "\n".join(L)
