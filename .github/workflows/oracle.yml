@@ -117,7 +117,9 @@ jobs:
               # rest.
               python -m oracle.ingestion.china_market --verify | tee etf_verify.md || true
               cp etf_verify.md _state/etf_verify.md || true
-              python -m oracle.backfill 365
+              # 'all' = every bar the sources return. The ETF endpoints serve
+              # 1.5k-3.5k bars per fund; a 365-day trim stored 371 of them.
+              python -m oracle.backfill all
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
               python -m oracle.backtest
@@ -127,7 +129,7 @@ jobs:
               cat rule_tuning.md || true
               cp rule_tuning.md _state/rule_tuning.md || true ;;
             research)                    # wide US<->China correlation sweep + report
-              python -m oracle.research.run 400 --out research_report.md
+              python -m oracle.research.run 0 --out research_report.md
               cp research_report.md _state/research_report.md
               # Does Chinese news sentiment predict the next session? Reports
               # "not measured yet" plus a detectability table until the history

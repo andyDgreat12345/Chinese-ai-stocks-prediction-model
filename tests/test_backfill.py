@@ -82,3 +82,55 @@ def test_purge_phantom_sessions_removes_weekend_rows_only():
     assert left == ["2026-08-07"]
     # idempotent
     assert purge_phantom_sessions(tmp)["china_close"] == 0
+
+
+# ── history depth ─────────────────────────────────────────────────────────
+def test_all_history_keeps_every_bar():
+    """The 365-day trim was discarding data already downloaded: the ETF endpoints
+    serve 1,559–3,557 bars per fund and we stored 371 of them."""
+    from oracle.backfill import ALL_HISTORY, _trim_days
+
+    series = [(f"2020-01-{i:02}", float(i)) for i in range(1, 29)]
+    assert len(_trim_days(series, ALL_HISTORY)) == len(series)
+    assert len(_trim_days(series, 0)) == len(series)
+    assert len(_trim_days(series, -1)) == len(series)
+
+
+def test_trim_keeps_one_extra_bar_for_the_first_pct_change():
+    from oracle.backfill import _trim_days
+
+    series = [(f"2020-01-{i:02}", float(i)) for i in range(1, 29)]
+    assert len(_trim_days(series, 10)) == 11
+
+
+def test_us_download_asks_for_max_when_all_history_requested(monkeypatch):
+    """yfinance caps a '<n>d' period short of a full listing history. Every
+    US<->China pairing is bounded by the shorter leg, so a short US side would
+    cap the sweep no matter how much China history exists."""
+    import sys, types
+
+    seen = {}
+    fake = types.ModuleType("yfinance")
+    fake.download = lambda symbol, **kw: seen.update(kw) or None
+    monkeypatch.setitem(sys.modules, "yfinance", fake)
+
+    from oracle.backfill import _download_us
+
+    _download_us("^GSPC", 0)
+    assert seen["period"] == "max"
+    _download_us("^GSPC", 365)
+    assert seen["period"] == "365d"
+
+
+def test_backfill_cli_accepts_all(monkeypatch):
+    from oracle import backfill as bf
+
+    got = {}
+    monkeypatch.setattr(bf, "backfill", lambda days: got.setdefault("days", days))
+    for word in ("all", "max", "full", "ALL"):
+        got.clear()
+        bf.main([word])
+        assert got["days"] == bf.ALL_HISTORY, word
+    got.clear()
+    bf.main(["365"])
+    assert got["days"] == 365
