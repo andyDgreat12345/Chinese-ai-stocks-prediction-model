@@ -55,3 +55,30 @@ def test_backfill_then_backtest_end_to_end(monkeypatch):
     # and the backtest can now run over the backfilled history
     report = backtest.run_backtest(db_path=tmp)
     assert report["n_records"] > 0
+
+
+def test_purge_phantom_sessions_removes_weekend_rows_only():
+    """The fetch-clock bug filed Friday's bar as a Saturday session. Weekend rows
+    are unambiguous phantoms; a flat weekday is not, so duplicates are kept."""
+    import tempfile
+    from oracle import db
+    from oracle.backfill import purge_phantom_sessions
+
+    tmp = tempfile.mktemp(suffix=".db")
+    db.init_db(tmp)
+    rows = [
+        {"trade_date": "2026-08-07", "symbol": "X", "sector": "broad",  # Friday
+         "close": 1.0, "pct_change": 0.5, "fetched_at": "t"},
+        {"trade_date": "2026-08-08", "symbol": "X", "sector": "broad",  # Saturday
+         "close": 1.0, "pct_change": 0.5, "fetched_at": "t"},
+        {"trade_date": "2026-08-09", "symbol": "X", "sector": "broad",  # Sunday
+         "close": 1.0, "pct_change": 0.5, "fetched_at": "t"},
+    ]
+    db.upsert_market_close("china_close", rows, db_path=tmp)
+    out = purge_phantom_sessions(tmp)
+    assert out["china_close"] == 2
+    left = [r["trade_date"] for r in db.close_series("china_close", symbol="X",
+                                                     limit=100, db_path=tmp)]
+    assert left == ["2026-08-07"]
+    # idempotent
+    assert purge_phantom_sessions(tmp)["china_close"] == 0

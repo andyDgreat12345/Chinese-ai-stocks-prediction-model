@@ -254,3 +254,55 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+
+# ── repair ────────────────────────────────────────────────────────────────
+def purge_phantom_sessions(db_path=None) -> dict:
+    """Delete rows stamped on days the market cannot have traded.
+
+    The fetch-clock stamping bug (fixed in the ingestion jobs) filed Friday's bar
+    as a Saturday session and re-filed an unchanged bar under the next calendar
+    day. Fixing the writer stops new ones; this removes those already stored,
+    because every phantom row is a fake "actual" the model gets scored against.
+
+    Only weekend rows are deleted. A consecutive-duplicate bar is NOT removed:
+    a genuinely flat session looks identical, and deleting real flat days to
+    catch a few phantoms would be a worse trade. Weekends are unambiguous.
+
+    Idempotent. Returns {table: rows_deleted}.
+    """
+    from datetime import date
+
+    from . import db as _db
+
+    out = {}
+    conn = _db.connect(db_path)
+    try:
+        for table in ("us_close", "china_close"):
+            dates = [r[0] for r in conn.execute(
+                f"SELECT DISTINCT trade_date FROM {table}").fetchall()]
+            weekend = [d for d in dates
+                       if date.fromisoformat(d).weekday() >= 5]
+            if not weekend:
+                out[table] = 0
+                continue
+            marks = ",".join("?" * len(weekend))
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE trade_date IN ({marks})", weekend)
+            out[table] = cur.rowcount
+        # Predictions made FOR a non-session are equally meaningless.
+        pdates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM predictions").fetchall()]
+        pweekend = [d for d in pdates if date.fromisoformat(d).weekday() >= 5]
+        if pweekend:
+            marks = ",".join("?" * len(pweekend))
+            cur = conn.execute(
+                f"DELETE FROM predictions WHERE trade_date IN ({marks})", pweekend)
+            out["predictions"] = cur.rowcount
+        else:
+            out["predictions"] = 0
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"purge_phantom_sessions: {out}")
+    return out

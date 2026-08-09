@@ -64,14 +64,26 @@ def _bucket(score: float, threshold: float = BULLISH_THRESHOLD) -> str:
 
 
 def _confidence(signals: SectorSignals, composite: float,
-                threshold: float = BULLISH_THRESHOLD) -> str:
+                threshold: float = BULLISH_THRESHOLD,
+                weights: dict[str, float] | None = None) -> str:
     """Confidence rises with signal agreement, falls when signals disagree.
 
     Per spec §4.4: if US spillover and news sentiment point opposite ways,
     confidence drops. A live macro event (macro_flag) can override upward.
+
+    **Sentiment only counts here if it has earned a weight.** This function used
+    to read ``signals.sentiment`` directly, bypassing the weights entirely — so
+    when the news layer came alive, sentiment began gating live predictions
+    (37% of calls forced to "low" by disagreement) while its fitted weight was
+    still pinned at 0.00 for want of coverage. That is two gates where there
+    should be one: the learner refuses to trust a signal until it clears the
+    coverage bar, and confidence must refuse it on exactly the same terms.
+    Passing no weights preserves the old behaviour for callers that have none.
     """
     us_dir = _sign(signals.us_spillover)
     sent_dir = _sign(signals.sentiment)
+    if weights is not None and float(weights.get("sentiment", 0.0)) == 0.0:
+        sent_dir = 0        # unearned -> carries no agreement information
 
     agree = us_dir != 0 and us_dir == sent_dir
     disagree = us_dir != 0 and sent_dir != 0 and us_dir != sent_dir
@@ -113,7 +125,7 @@ def score_sector(
     composite = max(-1.0, min(1.0, composite))
 
     direction = _bucket(composite, thr)
-    confidence = _confidence(signals, composite, thr)
+    confidence = _confidence(signals, composite, thr, w)
 
     parts = [
         f"US spillover {signals.us_spillover:+.2f}",
