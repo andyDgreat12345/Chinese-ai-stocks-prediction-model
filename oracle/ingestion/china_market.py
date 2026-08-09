@@ -48,14 +48,22 @@ def pick_close_series(records: list[dict], close_keys=_CLOSE_KEYS) -> list[float
 def normalize(latest_by_symbol: dict[str, list[float]], fetched_at: str,
               trade_date: str, sector_tags: dict[str, str]) -> list[dict]:
     """{symbol: [.., prev_close, last_close]} -> DB rows. Pure/testable.
-    `sector_tags` maps each symbol to its logical China sector."""
+    `sector_tags` maps each symbol to its logical China sector.
+
+    ``trade_date`` is only a FALLBACK. When the payload carries the source's own
+    ``bar_date`` that wins, because the fetch clock is not the market's clock: the
+    job runs at 15:15 CST and stamped whatever the UTC date happened to be, so a
+    Saturday run re-filed Friday's bar as a Saturday session, and a run before the
+    source refreshed duplicated the previous day. Both appeared in live data.
+    """
     rows = []
     for symbol, series in latest_by_symbol.items():
         # A value may be a bare close list (legacy) or {"closes": [...],
-        # "ohlc": {...}} when the source also gave us the day's bar.
-        bar = {}
+        # "ohlc": {...}, "bar_date": ...} when the source dated its own bar.
+        bar, row_date = {}, trade_date
         if isinstance(series, dict):
             bar = series.get("ohlc") or {}
+            row_date = series.get("bar_date") or trade_date
             series = series.get("closes") or []
         vals = [v for v in series if v is not None]
         if not vals:
@@ -65,7 +73,7 @@ def normalize(latest_by_symbol: dict[str, list[float]], fetched_at: str,
         if len(vals) >= 2 and vals[-2]:
             pct = round((last / vals[-2] - 1.0) * 100.0, 4)
         rows.append({
-            "trade_date": trade_date,
+            "trade_date": row_date,
             "symbol": symbol,
             "sector": sector_tags.get(symbol),
             "close": round(last, 4),
@@ -158,10 +166,15 @@ def _collect(codes: list[str], downloader) -> dict[str, dict]:
             closes = pick_close_series(records)
             bars = extract_dated_ohlc(records)
             latest[code] = {"closes": closes[-2:],
-                            "ohlc": bars[-1][1] if bars else {}}
+                            "ohlc": bars[-1][1] if bars else {},
+                            # The source's OWN date for that bar. Keeping it is
+                            # the whole fix: stamping rows with the fetch clock
+                            # invented Saturday sessions and duplicated Friday's
+                            # bar under the next calendar day.
+                            "bar_date": bars[-1][0] if bars else None}
         except Exception as e:  # noqa: BLE001
             print(f"fetch_china_close: {code} failed: {e!r}")
-            latest[code] = {"closes": [], "ohlc": {}}
+            latest[code] = {"closes": [], "ohlc": {}, "bar_date": None}
     return latest
 
 

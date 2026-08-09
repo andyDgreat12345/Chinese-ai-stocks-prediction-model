@@ -198,3 +198,56 @@ def test_verify_flags_a_code_that_resolves_but_is_empty(monkeypatch):
     res = cm.verify_sector_etfs({"hollow": "999999"})
     assert not res["hollow"]["ok"]
     assert "no usable closes" in res["hollow"]["error"]
+
+
+# ── trade_date comes from the data, not the wall clock ────────────────────
+def test_china_normalize_prefers_the_sources_own_bar_date():
+    """Live bug: the job ran at 15:15 CST and stamped the UTC date, so a Saturday
+    run filed Friday's bar as a Saturday session."""
+    from oracle.ingestion.china_market import normalize
+
+    rows = normalize(
+        {"510300": {"closes": [4.70, 4.75], "ohlc": {"close": 4.75},
+                    "bar_date": "2026-08-07"}},
+        "t", "2026-08-08", {"510300": "broad"})
+    assert rows[0]["trade_date"] == "2026-08-07", "must use the bar's own date"
+
+
+def test_china_normalize_falls_back_when_the_source_gives_no_date():
+    from oracle.ingestion.china_market import normalize
+
+    rows = normalize({"510300": {"closes": [1.0, 2.0], "ohlc": {}}},
+                     "t", "2026-08-08", {"510300": "broad"})
+    assert rows[0]["trade_date"] == "2026-08-08"
+
+
+def test_us_normalize_uses_per_symbol_bar_dates():
+    from oracle.ingestion.us_market import normalize
+
+    rows = normalize({"^GSPC": [100.0, 101.0], "XLE": [50.0, 51.0]}, "t",
+                     "2026-08-08", {"^GSPC": "2026-08-07"})
+    by = {r["symbol"]: r["trade_date"] for r in rows}
+    assert by["^GSPC"] == "2026-08-07"
+    assert by["XLE"] == "2026-08-08"      # no bar date -> fallback
+
+
+def test_us_bar_dates_are_per_symbol_not_per_frame():
+    """yfinance pads every symbol to a shared index, so a symbol that did not
+    print today carries a trailing NaN — its real last bar is earlier. Using the
+    frame's final index date for everything would re-date those stale bars."""
+    from oracle.ingestion.us_market import extract_bar_dates
+
+    class F:
+        index = ["2026-08-05", "2026-08-06", "2026-08-07"]
+
+    closes = {"fresh": [1.0, 2.0, 3.0], "stale": [1.0, 2.0, None], "empty": []}
+    dates = extract_bar_dates(F(), ["fresh", "stale", "empty"], closes)
+    assert dates["fresh"] == "2026-08-07"
+    assert dates["stale"] == "2026-08-06"      # not re-dated to today
+    assert "empty" not in dates
+
+
+def test_us_bar_dates_degrade_safely_without_an_index():
+    from oracle.ingestion.us_market import extract_bar_dates
+
+    assert extract_bar_dates(object(), ["A"], {"A": [1.0]}) == {}

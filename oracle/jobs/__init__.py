@@ -59,8 +59,12 @@ def pre_open_refresh() -> None:
 def fetch_china_close() -> None:
     """15:05 CST — log actual China close, compare vs morning prediction."""
     _stamp("fetch_china_close")
+    from ..backfill import purge_phantom_sessions
     from ..ingestion.china_market import fetch_china_close as _run
     _run()
+    # Self-heal any weekend-stamped rows left by the old fetch-clock stamping.
+    # Idempotent and cheap; keeps a restored older DB from carrying phantoms.
+    purge_phantom_sessions()
 
 
 def reflect_and_update() -> None:
