@@ -117,19 +117,24 @@ jobs:
               # rest.
               python -m oracle.ingestion.china_market --verify | tee etf_verify.md || true
               cp etf_verify.md _state/etf_verify.md || true
-              # 'all' = every bar the sources return. The ETF endpoints serve
-              # 1.5k-3.5k bars per fund; a 365-day trim stored 371 of them.
-              python -m oracle.backfill all
+              # Ten years. Deeper reached 1990, where the model scores 49.7% —
+              # pre-2010 China had no sector ETFs and no US coupling, so that
+              # macro structure is a different market, not more samples.
+              python -m oracle.backfill "$(python -c 'from oracle import config; print(config.BACKFILL_DAYS)')"
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
               python -m oracle.backtest
               # Fit the trader's exit rules on a holdout the search never saw.
               # Reports a verdict only; nothing is auto-applied to the live rules.
+              # Where the edge actually sits inside the daily bar.
+              python -m oracle.analysis.segments > segments.md || true
+              cat segments.md || true
+              cp segments.md _state/segments.md || true
               python -m oracle.simulator.tune > rule_tuning.md || true
               cat rule_tuning.md || true
               cp rule_tuning.md _state/rule_tuning.md || true ;;
             research)                    # wide US<->China correlation sweep + report
-              python -m oracle.research.run 0 --out research_report.md
+              python -m oracle.research.run "$(python -c 'from oracle import config; print(config.BACKFILL_DAYS)')" --out research_report.md
               cp research_report.md _state/research_report.md
               # Does Chinese news sentiment predict the next session? Reports
               # "not measured yet" plus a detectability table until the history

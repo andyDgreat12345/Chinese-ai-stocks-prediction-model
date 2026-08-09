@@ -253,7 +253,22 @@ LEARNING_ADOPT_COOLDOWN_DAYS = int(
 #
 # Deep history stays in the DB and is still swept for research; this only bounds
 # what the parameter search fits on. Set to "" to fit on everything.
-LEARNING_TRAIN_START = os.environ.get("ORACLE_LEARNING_TRAIN_START", "2015-01-01")
+def _years_ago(n: int) -> str:
+    from datetime import date, timedelta
+    return (date.today() - timedelta(days=365 * n)).isoformat()
+
+
+# How much history to keep and learn from. Ten years, as a ROLLING window rather
+# than a fixed date, so it does not silently age into a fifteen-year window.
+#
+# Full history reached 1990 and that was too far: measured per era the model hit
+# 49.7% in the 1990s versus 54.4% in 2025-26, because pre-2010 China had no
+# sector ETFs and no measurable US coupling. Those years are a different market,
+# not more samples of this one, and macro structure from them says nothing about
+# how these instruments trade now.
+HISTORY_YEARS = int(os.environ.get("ORACLE_HISTORY_YEARS") or 10)
+BACKFILL_DAYS = HISTORY_YEARS * 365
+LEARNING_TRAIN_START = os.environ.get("ORACLE_LEARNING_TRAIN_START") or _years_ago(HISTORY_YEARS)
 
 # ── Live web search (optional — augments the AI analyst) ─────────────────
 # DeepSeek's API has no web search, so we run it ourselves and feed the results
