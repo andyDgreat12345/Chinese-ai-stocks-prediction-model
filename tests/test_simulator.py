@@ -176,3 +176,38 @@ def test_report_renders_and_states_the_verdict():
     text = engine.format_report(engine.simulate(calls, bars, dates, TraderRules(), 100_000))
     assert "trader simulation" in text and "buy & hold" in text
     assert "Not investment advice" in text
+
+
+# ── benchmark on an unbalanced panel ──────────────────────────────────────
+def test_buy_and_hold_buys_each_symbol_at_its_own_first_bar():
+    """With full history the window opens in 1990 and no sector ETF existed yet.
+    Requiring a bar on day one made every symbol unusable, so the benchmark
+    returned the starting cash, printed +0.00%, and the report declared victory
+    over it."""
+    from oracle.simulator.engine import buy_and_hold
+
+    dates = ["d1", "d2", "d3"]
+    bars = {
+        "old": {"d1": {"c": 100.0}, "d2": {"c": 110.0}, "d3": {"c": 120.0}},
+        "new": {"d2": {"c": 50.0}, "d3": {"c": 100.0}},      # lists on d2
+    }
+    bh = buy_and_hold(bars, ["old", "new"], dates, 100_000.0)
+    # old: 120/100 = 1.2x on 50k; new: 100/50 = 2.0x on 50k
+    assert bh == 50_000 * 1.2 + 50_000 * 2.0
+
+
+def test_buy_and_hold_reports_none_when_nothing_spans_the_window():
+    from oracle.simulator.engine import buy_and_hold
+
+    assert buy_and_hold({}, ["x"], ["d1", "d2"]) is None
+    assert buy_and_hold({"x": {"d1": {"c": 1.0}}}, ["x"], ["d1", "d2"]) is None
+    assert buy_and_hold({"x": {"d1": {"c": 1.0}}}, ["x"], []) is None
+
+
+def test_report_says_na_rather_than_claiming_a_beat():
+    from oracle.simulator import engine
+
+    res = engine.simulate({}, {}, ["d1", "d2"], starting_cash=1000.0)
+    assert res["beat_buy_and_hold"] is None, "cannot-compare must not read as lost"
+    text = engine.format_report(res)
+    assert "n/a" in text and "no benchmark" in text

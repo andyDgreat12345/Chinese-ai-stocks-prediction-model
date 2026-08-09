@@ -138,19 +138,41 @@ def _equity(st: PortfolioState, bars: dict, date: str) -> float:
 
 
 def buy_and_hold(bars: dict, symbols: list[str], dates: list[str],
-                 starting_cash: float = 100_000.0) -> float:
-    """Equal-weight buy-and-hold over the same window — the benchmark to beat."""
-    usable = [s for s in symbols
-              if bars.get(s, {}).get(dates[0], {}).get("c")
-              and bars.get(s, {}).get(dates[-1], {}).get("c")]
-    if not usable or not dates:
-        return starting_cash
+                 starting_cash: float = 100_000.0) -> float | None:
+    """Equal-weight buy-and-hold over the same window — the benchmark to beat.
+
+    Each symbol is bought at **its own first available bar**, not at the window's
+    first date. With full history the window opens in 1990 and no sector ETF
+    existed yet, so requiring a bar on day one made every symbol unusable: the
+    benchmark silently returned the starting cash, printed +0.00%, and the report
+    declared victory over it. An unbalanced panel is the normal case once history
+    is deep, so the benchmark has to buy each instrument when it lists.
+
+    Cash earmarked for a symbol sits idle until that symbol's first bar, which is
+    what actually happens to a buyer waiting for a listing.
+
+    Returns None when no symbol has a usable pair of bars — the caller must then
+    report "n/a" rather than claim a comparison it cannot make.
+    """
+    if not dates:
+        return None
+    last_date = dates[-1]
+    date_set = set(dates)
+    usable = []
+    for s in symbols:
+        series = bars.get(s) or {}
+        if not (series.get(last_date) or {}).get("c"):
+            continue
+        first = next((d for d in dates
+                      if d in date_set and (series.get(d) or {}).get("c")), None)
+        if first is not None:
+            usable.append((s, first))
+    if not usable:
+        return None
     per = starting_cash / len(usable)
     total = 0.0
-    for s in usable:
-        first = bars[s][dates[0]]["c"]
-        last = bars[s][dates[-1]]["c"]
-        total += per * (last / first)
+    for s, first in usable:
+        total += per * (bars[s][last_date]["c"] / bars[s][first]["c"])
     return total
 
 
@@ -179,9 +201,11 @@ def _summarize(st: PortfolioState, bars: dict, dates: list[str],
         "starting_cash": starting_cash,
         "final_equity": round(final, 2),
         "return_pct": round((final / starting_cash - 1) * 100, 4),
-        "buy_and_hold_equity": round(bh, 2),
-        "buy_and_hold_return_pct": round((bh / starting_cash - 1) * 100, 4),
-        "beat_buy_and_hold": final > bh,
+        "buy_and_hold_equity": None if bh is None else round(bh, 2),
+        "buy_and_hold_return_pct": (None if bh is None
+                                    else round((bh / starting_cash - 1) * 100, 4)),
+        # None, not False: "we could not compare" is not "we lost".
+        "beat_buy_and_hold": None if bh is None else final > bh,
         "n_trades": len(trades),
         "win_rate": round(len(wins) / len(trades), 4) if trades else None,
         "avg_win_pct": round(sum(t.pnl_pct for t in wins) / len(wins), 4) if wins else None,
@@ -218,9 +242,14 @@ def format_report(s: dict) -> str:
         f"  max drawdown        {s['max_drawdown_pct']:.2f}%",
         "",
         f"  final equity        {s['final_equity']:,.2f}  ({pct(s['return_pct'])})",
-        f"  buy & hold          {s['buy_and_hold_equity']:,.2f}  "
-        f"({pct(s['buy_and_hold_return_pct'])})",
-        f"  verdict             {'BEAT buy & hold' if s['beat_buy_and_hold'] else 'did NOT beat buy & hold'}",
+        (f"  buy & hold          {s['buy_and_hold_equity']:,.2f}  "
+         f"({pct(s['buy_and_hold_return_pct'])})"
+         if s['buy_and_hold_equity'] is not None else
+         "  buy & hold          n/a  (no instrument spans this window)"),
+        (f"  verdict             "
+         f"{'BEAT buy & hold' if s['beat_buy_and_hold'] else 'did NOT beat buy & hold'}"
+         if s['beat_buy_and_hold'] is not None else
+         "  verdict             no benchmark — comparison not available"),
         "",
         f"  exits: {s['exit_reasons'] or '(none)'}",
         "",

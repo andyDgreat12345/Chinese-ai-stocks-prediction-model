@@ -326,3 +326,39 @@ def test_pin_applies_even_while_a_sector_is_in_cooldown(monkeypatch):
     row = at.tune_sector("semis", recs, inc, "2026-08-10", "t", db_path=tmp)
     assert row["adopted"] == 0 and "cooldown" in row["reason"]
     assert db.get_model_params("semis", tmp)["sentiment"] == 0.0
+
+
+def test_learner_is_bounded_to_the_regime_it_can_learn_from(monkeypatch):
+    """Full-history backfill reaches 1990, but that is not more samples of the
+    same process: measured per era the model hits 49.7% in the 1990s and 54.4%
+    in 2025-26 — the edge emerges as China integrates with global markets.
+    Deep history stays for research; the parameter search must not be diluted."""
+    from oracle.learning import autotune as at
+
+    seen = {}
+    monkeypatch.setattr(config, "LEARNING_TRAIN_START", "2015-01-01")
+    monkeypatch.setattr(config, "LEARNING_ENABLED", True)
+    import oracle.backtest as bt
+    def fake(start=None, db_path=None):
+        seen["start"] = start
+        return []
+
+    monkeypatch.setattr(bt, "collect_records", fake)
+    at.run_autotune("2026-08-09", db_path=None)
+    assert seen["start"] == "2015-01-01"
+
+
+def test_empty_train_start_means_fit_on_everything(monkeypatch):
+    from oracle.learning import autotune as at
+
+    seen = {}
+    monkeypatch.setattr(config, "LEARNING_TRAIN_START", "")
+    monkeypatch.setattr(config, "LEARNING_ENABLED", True)
+    import oracle.backtest as bt
+    def fake(start=None, db_path=None):
+        seen["start"] = start
+        return []
+
+    monkeypatch.setattr(bt, "collect_records", fake)
+    at.run_autotune("2026-08-09", db_path=None)
+    assert seen["start"] is None
