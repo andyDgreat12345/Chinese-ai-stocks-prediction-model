@@ -126,7 +126,11 @@ jobs:
               python -m oracle.backfill "$(python -c 'from oracle import config; print(config.BACKFILL_DAYS)')"
               # Capping the fetch does not remove rows an earlier full-history
               # run already stored, so trim the DB to the same window.
-              python -c 'from oracle.backfill import prune_history; prune_history()' 
+              python -c 'from oracle.backfill import prune_history; prune_history()'
+              # Share conversions survive a re-fetch whenever Eastmoney is down
+              # and Sina (unadjusted only) serves the data, so neutralize them
+              # from the DB rather than trusting the source.
+              python -c 'from oracle.ingestion.china_market import neutralize_corporate_actions as n; n()' 
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
               python -m oracle.backtest

@@ -251,3 +251,58 @@ def test_us_bar_dates_degrade_safely_without_an_index():
     from oracle.ingestion.us_market import extract_bar_dates
 
     assert extract_bar_dates(object(), ["A"], {"A": [1.0]}) == {}
+
+
+# ── price limits are per-board ────────────────────────────────────────────
+def test_daily_limit_is_per_instrument():
+    """One 10% rule flagged the real September-October 2024 stimulus rally as
+    corrupt: 159915 printed +20.00% and sz399006 +17.25%, both genuine ChiNext
+    limit-moves. ChiNext and STAR run ±20%, the main board ±10%."""
+    from oracle.ingestion.china_market import daily_limit_for
+
+    assert daily_limit_for("159915") > 20
+    assert daily_limit_for("sz399006") > 20
+    assert daily_limit_for("510300") < 12
+
+
+def test_implausible_moves_uses_each_instruments_limit():
+    import tempfile
+    from oracle import db
+    from oracle.ingestion.china_market import implausible_moves
+
+    tmp = tempfile.mktemp(suffix=".db")
+    db.init_db(tmp)
+    db.upsert_market_close("china_close", [
+        # real ChiNext limit-up — must NOT be flagged
+        {"trade_date": "2024-10-08", "symbol": "159915", "sector": "growth",
+         "close": 2.678, "pct_change": 19.98, "fetched_at": "t"},
+        # main-board ETF cannot do this — a share conversion
+        {"trade_date": "2021-06-25", "symbol": "159928", "sector": "consumer",
+         "close": 1.261, "pct_change": -74.47, "fetched_at": "t"},
+    ], db_path=tmp)
+    flagged = {r["symbol"] for r in implausible_moves(db_path=tmp)}
+    assert flagged == {"159928"}
+
+
+def test_neutralize_marks_artifacts_unknown_rather_than_guessing():
+    """adjust='qfq' only helps when Eastmoney answers; the Sina fallback serves
+    unadjusted prices and cannot do otherwise, so the repair must not depend on
+    the source being up."""
+    import tempfile
+    from oracle import db
+    from oracle.ingestion.china_market import neutralize_corporate_actions
+
+    tmp = tempfile.mktemp(suffix=".db")
+    db.init_db(tmp)
+    db.upsert_market_close("china_close", [
+        {"trade_date": "2021-06-25", "symbol": "159928", "sector": "consumer",
+         "close": 1.261, "pct_change": -74.47, "fetched_at": "t"},
+        {"trade_date": "2024-10-08", "symbol": "159915", "sector": "growth",
+         "close": 2.678, "pct_change": 19.98, "fetched_at": "t"},
+    ], db_path=tmp)
+    assert neutralize_corporate_actions(tmp) == 1
+    rows = {r["trade_date"]: r for r in db.close_series(
+        "china_close", symbol="159928", limit=10, db_path=tmp)}
+    assert rows["2021-06-25"]["pct_change"] is None
+    assert rows["2021-06-25"]["close"] == 1.261     # close kept so charts render
+    assert neutralize_corporate_actions(tmp) == 0   # idempotent

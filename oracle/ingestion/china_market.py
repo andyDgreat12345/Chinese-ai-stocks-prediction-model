@@ -271,12 +271,23 @@ if __name__ == "__main__":
 
 
 # ── data quality ──────────────────────────────────────────────────────────
-# A-share ETFs trade within a 10% daily band. Anything past this is a corporate
-# action, a bad print, or an unadjusted split — never a market move.
-PLAUSIBLE_DAILY_LIMIT_PCT = 11.0
+# A-share price limits are per-board, not universal. Main board is ±10%; ChiNext
+# (创业板) and STAR are ±20%. Using one 10% rule flagged the genuine September-
+# October 2024 stimulus rally as corrupt — 159915 printed +20.00% and sz399006
+# +17.25%, both real limit-moves — while the actual corporate actions sit far
+# beyond either bound. A margin is added so a limit-up bar is not borderline.
+DEFAULT_DAILY_LIMIT_PCT = 11.0
+WIDE_LIMIT_SYMBOLS = {"159915", "sz399006"}   # ChiNext ETF + ChiNext index
+WIDE_DAILY_LIMIT_PCT = 21.0
 
 
-def implausible_moves(db_path=None, limit_pct: float = PLAUSIBLE_DAILY_LIMIT_PCT,
+def daily_limit_for(symbol: str) -> float:
+    """The daily price limit that applies to this instrument. Pure."""
+    return (WIDE_DAILY_LIMIT_PCT if symbol in WIDE_LIMIT_SYMBOLS
+            else DEFAULT_DAILY_LIMIT_PCT)
+
+
+def implausible_moves(db_path=None, limit_pct: float | None = None,
                       table: str = "china_close") -> list[dict]:
     """Stored bars whose daily move exceeds what the market mechanically allows.
 
@@ -292,15 +303,21 @@ def implausible_moves(db_path=None, limit_pct: float = PLAUSIBLE_DAILY_LIMIT_PCT
     try:
         rows = conn.execute(
             f"""SELECT trade_date, symbol, sector, close, pct_change FROM {table}
-                WHERE pct_change IS NOT NULL AND ABS(pct_change) > ?
-                ORDER BY ABS(pct_change) DESC""", (limit_pct,)).fetchall()
-        return [dict(r) for r in rows]
+                WHERE pct_change IS NOT NULL
+                ORDER BY ABS(pct_change) DESC""").fetchall()
+        out = []
+        for r in rows:
+            cap = limit_pct if limit_pct is not None else daily_limit_for(r["symbol"])
+            if abs(r["pct_change"]) > cap:
+                out.append({**dict(r), "limit_pct": cap})
+        return out
     finally:
         conn.close()
 
 
-def format_quality_report(rows: list[dict], limit_pct: float = PLAUSIBLE_DAILY_LIMIT_PCT) -> str:
-    L = [f"China bar quality — moves beyond the ±{limit_pct:.0f}% daily band", ""]
+def format_quality_report(rows: list[dict], limit_pct: float | None = None) -> str:
+    L = ["China bar quality — moves beyond each instrument's daily price limit",
+         "  (main board ±10%, ChiNext/STAR ±20%)", ""]
     if not rows:
         L.append("  none. Every stored bar is within what the market allows.")
     else:
@@ -309,7 +326,41 @@ def format_quality_report(rows: list[dict], limit_pct: float = PLAUSIBLE_DAILY_L
         L.append("")
         for r in rows[:20]:
             L.append(f"    {r['trade_date']}  {r['symbol']:8} {str(r['sector']):11} "
-                     f"{r['pct_change']:+8.2f}%")
+                     f"{r['pct_change']:+8.2f}%  (limit ±{r.get('limit_pct', 0):.0f}%)")
         if len(rows) > 20:
             L.append(f"    ... and {len(rows) - 20} more")
     return "\n".join(L)
+
+
+def neutralize_corporate_actions(db_path=None) -> int:
+    """NULL the pct_change on bars that exceed their instrument's price limit.
+
+    Fetching with adjust="qfq" only helps when Eastmoney answers. When it is
+    unreachable the Sina fallback serves unadjusted prices and cannot do
+    otherwise, so five share-conversion bars survived a re-backfill unchanged.
+    A repair that depends on the source being up is not a repair.
+
+    A move beyond the daily limit is mechanically impossible, so the bar's
+    pct_change is not a return — it is an artifact. We do not guess the true
+    return: we mark it unknown, which stops the backtest scoring a -74% "loss"
+    and the simulator taking it. The close is left alone so charts still render.
+
+    Idempotent. Returns rows changed.
+    """
+    from ..db import connect
+
+    conn = connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT trade_date, symbol, pct_change FROM china_close "
+            "WHERE pct_change IS NOT NULL").fetchall()
+        bad = [(r["trade_date"], r["symbol"]) for r in rows
+               if abs(r["pct_change"]) > daily_limit_for(r["symbol"])]
+        for d, sym in bad:
+            conn.execute("UPDATE china_close SET pct_change = NULL "
+                         "WHERE trade_date = ? AND symbol = ?", (d, sym))
+        conn.commit()
+        print(f"neutralize_corporate_actions: marked {len(bad)} artifact bar(s) unknown")
+        return len(bad)
+    finally:
+        conn.close()
