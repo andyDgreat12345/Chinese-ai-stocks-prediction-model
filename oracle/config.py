@@ -244,6 +244,17 @@ LEARNING_MIN_IMPROVEMENT = float(os.environ.get("ORACLE_LEARNING_MIN_GAIN") or 0
 LEARNING_ADOPT_COOLDOWN_DAYS = int(
     os.environ.get("ORACLE_LEARNING_COOLDOWN_DAYS") or 5)
 
+# Earliest session the learner may fit on. Full-history backfill reaches back to
+# 1990, but that is not all the same market: measured per era, the model's hit
+# rate is 49.7% in the 1990s, 51.2% in the 2000s, and 54.4% in 2025-26. The edge
+# EMERGES as China integrates with global markets — before ~2010 there were no
+# sector ETFs to trade and no measurable US coupling to exploit, so those years
+# are a different data-generating process, not more samples of this one.
+#
+# Deep history stays in the DB and is still swept for research; this only bounds
+# what the parameter search fits on. Set to "" to fit on everything.
+LEARNING_TRAIN_START = os.environ.get("ORACLE_LEARNING_TRAIN_START", "2015-01-01")
+
 # ── Live web search (optional — augments the AI analyst) ─────────────────
 # DeepSeek's API has no web search, so we run it ourselves and feed the results
 # into the analyst's prompt. OFF by default: set ORACLE_SEARCH_PROVIDER=tavily

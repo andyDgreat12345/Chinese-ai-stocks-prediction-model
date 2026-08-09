@@ -167,7 +167,11 @@ def run_autotune(run_date: str | None = None, db_path=None) -> dict:
     try:
         db.init_db(db_path)
         from ..backtest import collect_records
-        all_records = collect_records(db_path=db_path)
+        # Bounded by LEARNING_TRAIN_START: pre-2010 China had no sector
+        # instruments and no measurable US coupling, so those years dilute the
+        # fit rather than informing it. See the config note.
+        all_records = collect_records(start=config.LEARNING_TRAIN_START or None,
+                                      db_path=db_path)
     except Exception as e:  # noqa: BLE001 — learning must never break the pipeline
         print(f"run_autotune FAILED to load history ({e!r}) — parameters unchanged")
         return {"enabled": True, "adopted": 0, "rows": [], "error": str(e)}
