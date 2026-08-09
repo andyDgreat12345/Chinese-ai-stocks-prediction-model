@@ -134,3 +134,33 @@ def test_backfill_cli_accepts_all(monkeypatch):
     got.clear()
     bf.main(["365"])
     assert got["days"] == 365
+
+
+def test_prune_history_trims_to_the_window_and_spares_predictions():
+    """Capping what the backfill fetches does not remove what is already stored;
+    without pruning, reports keep spanning 1990 while the learner is bounded to
+    ten years — two different answers to how far back the system looks."""
+    import tempfile
+    from oracle import db
+    from oracle.backfill import prune_history
+
+    tmp = tempfile.mktemp(suffix=".db")
+    db.init_db(tmp)
+    rows = [{"trade_date": d, "symbol": "X", "sector": "broad", "close": 1.0,
+             "pct_change": 0.1, "fetched_at": "t"}
+            for d in ("1999-01-04", "2015-06-01", "2020-01-02", "2026-08-07")]
+    db.upsert_market_close("china_close", rows, db_path=tmp)
+    db.upsert_prediction({"trade_date": "1999-01-04", "sector": "broad",
+                          "direction": "bullish", "confidence": "low",
+                          "composite_score": 0.1, "us_spillover": 0.0,
+                          "sentiment_score": 0.0, "macro_flag": 0,
+                          "rationale": "r", "created_at": "t"}, db_path=tmp)
+
+    out = prune_history("2016-01-01", db_path=tmp)
+    assert out["china_close"] == 2
+    left = [r["trade_date"] for r in db.close_series("china_close", symbol="X",
+                                                     limit=100, db_path=tmp)]
+    assert left == ["2020-01-02", "2026-08-07"]
+    # the system's own record of what it said is an audit trail, not market data
+    assert db.predictions_for_date("1999-01-04", db_path=tmp)
+    assert prune_history("2016-01-01", db_path=tmp)["china_close"] == 0

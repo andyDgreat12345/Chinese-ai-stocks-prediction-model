@@ -330,3 +330,39 @@ def purge_phantom_sessions(db_path=None) -> dict:
         conn.close()
     print(f"purge_phantom_sessions: {out}")
     return out
+
+
+def prune_history(before: str | None = None, db_path=None) -> dict:
+    """Delete stored market rows older than ``before`` (default: the configured
+    ten-year window).
+
+    Capping what the backfill *fetches* does not remove what is already stored —
+    upserts only insert and update. Without this the DB keeps the 1990-onward
+    rows a previous full-history run wrote, and every report still spans them
+    even though the learner is bounded to the recent window. Two different
+    answers to "how far back does this system look" is one too many.
+
+    Predictions and their scores are left alone: they are the system's own
+    record of what it said, not market data, and rewriting history there would
+    destroy the audit trail.
+
+    Idempotent. Returns {table: rows_deleted}.
+    """
+    from . import config
+    from . import db as _db
+
+    cutoff = before or config.LEARNING_TRAIN_START
+    out = {}
+    if not cutoff:
+        return {"skipped": "no cutoff configured"}
+    conn = _db.connect(db_path)
+    try:
+        for table in ("us_close", "china_close"):
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE trade_date < ?", (cutoff,))
+            out[table] = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"prune_history: removed rows before {cutoff}: {out}")
+    return out

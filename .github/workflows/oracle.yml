@@ -121,6 +121,9 @@ jobs:
               # pre-2010 China had no sector ETFs and no US coupling, so that
               # macro structure is a different market, not more samples.
               python -m oracle.backfill "$(python -c 'from oracle import config; print(config.BACKFILL_DAYS)')"
+              # Capping the fetch does not remove rows an earlier full-history
+              # run already stored, so trim the DB to the same window.
+              python -c 'from oracle.backfill import prune_history; prune_history()' 
               python -m oracle.backtest ;;
             backtest)                    # just print the evaluation report to the log
               python -m oracle.backtest
