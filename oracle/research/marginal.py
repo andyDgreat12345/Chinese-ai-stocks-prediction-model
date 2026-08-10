@@ -304,3 +304,93 @@ def _p(x):
 
 def _f(x):
     return "    n/a" if x is None else f"{x:+7.4f}%"
+
+
+# ── validation ────────────────────────────────────────────────────────────
+# Instruments the rule was NEVER derived from. build_rows() covers only the
+# CHINA_SECTOR_ETFS; the broad indices are a genuinely independent sample of the
+# same market, which is the closest thing to a fresh dataset available without
+# waiting years for new sessions.
+HELD_OUT_SYMBOLS = ("sh000001", "sz399001", "sz399006")
+
+
+def held_out_rows(db_path=None, start: str | None = None,
+                  symbols=HELD_OUT_SYMBOLS) -> list[dict]:
+    """Feature rows for instruments outside the derivation set. Same shape as
+    ``build_rows`` so the identical predicate can be applied to both."""
+    from .. import db
+    from ..analysis.segments import decompose
+
+    out = []
+    for sym in symbols:
+        series = sorted(db.close_series("china_close", symbol=sym, limit=10 ** 6,
+                                        db_path=db_path),
+                        key=lambda r: r["trade_date"])
+        prev_close = prev_body = None
+        for r in series:
+            s = decompose(prev_close, dict(r))
+            if (start is None or r["trade_date"] >= start) and s.body is not None:
+                out.append({"sector": sym, "date": r["trade_date"],
+                            "gap": s.gap, "body": s.body,
+                            "prior_body": prev_body})
+            prev_close, prev_body = r["close"], s.body
+    return out
+
+
+def sensitivity_surface(rows: list[dict], prior_thresholds, gap_thresholds,
+                        cost_bps: float = COST_BPS, min_n: int = 60) -> list[dict]:
+    """Net return at every threshold pair around the chosen point. Pure.
+
+    A real effect is a **plateau**: it survives moving the cut points, because
+    the market does not know which round number was picked. A single strong cell
+    surrounded by weak ones is a fitted boundary, not a phenomenon — and it is
+    exactly what slicing produces by chance. Reporting the whole neighbourhood
+    makes the difference visible instead of asking the reader to trust one number.
+    """
+    from statistics import pstdev
+
+    out = []
+    for pb in prior_thresholds:
+        for g in gap_thresholds:
+            picked = [r for r in rows
+                      if (r.get("prior_body") or 0) <= pb and (r.get("gap") or 0) <= g]
+            if len(picked) < min_n:
+                out.append({"prior_body": pb, "gap": g, "n": len(picked),
+                            "net": None, "t": None})
+                continue
+            net = [r["body"] - cost_bps / 100.0 for r in picked]
+            m = sum(net) / len(net)
+            sd = pstdev(net) or 1e-9
+            out.append({"prior_body": pb, "gap": g, "n": len(picked),
+                        "net": round(m, 4),
+                        "t": round(m / (sd / sqrt(len(net))), 3)})
+    return out
+
+
+# A plateau must be broad AND flat. "Broad" alone is not enough: because the
+# thresholds are cumulative, a narrow strong subset also lands inside most looser
+# cells and drags them positive, so counting positive cells can call a spike a
+# plateau. Requiring the best and worst cells to be within this ratio is what
+# separates them — a fitted boundary towers over its neighbours.
+MAX_PLATEAU_RATIO = 4.0
+
+
+def surface_verdict(surface: list[dict]) -> dict:
+    """Is the neighbourhood a plateau or a spike? Pure."""
+    cells = [c for c in surface if c["net"] is not None]
+    if not cells:
+        return {"cells": 0, "positive": 0, "plateau": False}
+    pos = sum(1 for c in cells if c["net"] > 0)
+    best = max(c["net"] for c in cells)
+    worst = min(c["net"] for c in cells)
+    broad = pos / len(cells) >= 0.9
+    flat = worst > 0 and (best / worst) <= MAX_PLATEAU_RATIO
+    return {
+        "cells": len(cells),
+        "positive": pos,
+        "share_positive": round(pos / len(cells), 3),
+        "best_net": best,
+        "worst_net": worst,
+        "spread_ratio": None if worst <= 0 else round(best / worst, 2),
+        "plateau": bool(broad and flat),
+    }
