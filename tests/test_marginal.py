@@ -79,3 +79,58 @@ def test_conditions_are_all_observable_before_the_open():
     """A condition read from the session it labels would be lookahead."""
     assert set(k for k, _ in mg.CONDITIONS) == {
         "gap", "signal_strength", "prior_body", "volatility", "sector", "weekday"}
+
+
+# ── validation: held-out instruments ─────────────────────────────────────
+def test_held_out_symbols_are_outside_the_derivation_set():
+    """The rule was derived on sector ETFs only. The broad indices are an
+    independent sample of the same market — the closest thing to a fresh
+    dataset available without waiting years for new sessions."""
+    from oracle import config
+
+    derived_on = set(config.CHINA_SECTOR_ETFS.values())
+    assert not (set(mg.HELD_OUT_SYMBOLS) & derived_on)
+
+
+# ── validation: plateau vs spike ─────────────────────────────────────────
+def _grid_rows(net_by_bucket):
+    rows = []
+    for i in range(400):
+        pb = -2.0 if i % 2 else -0.1
+        gap = -1.0 if i % 3 else -0.1
+        rows.append({"date": f"2020-{1 + i // 30:02}-{1 + i % 28:02}",
+                     "prior_body": pb, "gap": gap,
+                     "body": net_by_bucket(pb, gap)})
+    return rows
+
+
+def test_a_plateau_is_recognised():
+    """A real effect survives moving the cut points — the market does not know
+    which round number was picked."""
+    rows = _grid_rows(lambda pb, gap: 0.6)
+    surface = mg.sensitivity_surface(rows, (-0.5, -1.0, -1.5), (-0.2, -0.4, -0.6),
+                                     min_n=10)
+    v = mg.surface_verdict(surface)
+    assert v["plateau"] and v["share_positive"] == 1.0
+
+
+def test_a_single_strong_cell_is_not_a_plateau():
+    """One strong cell surrounded by weak ones is a fitted boundary, and it is
+    exactly what slicing produces by chance."""
+    # Thresholds are cumulative, so a tight strong subset also lands inside every
+    # looser cell. The spike is sized so that dilution leaves the wide cells
+    # negative — which is what a genuinely local effect looks like here.
+    def payoff(pb, gap):
+        return 2.0 if (pb <= -2.0 and gap <= -1.0) else -0.5
+    rows = _grid_rows(payoff)
+    surface = mg.sensitivity_surface(rows, (-0.05, -1.0, -2.0), (-0.05, -0.5, -1.0),
+                                     min_n=10)
+    v = mg.surface_verdict(surface)
+    assert not v["plateau"]
+
+
+def test_thin_cells_report_none_rather_than_a_number():
+    rows = [{"date": "2020-01-01", "prior_body": -3.0, "gap": -3.0, "body": 1.0}]
+    surface = mg.sensitivity_surface(rows, (-1.0,), (-1.0,), min_n=60)
+    assert surface[0]["net"] is None and surface[0]["n"] == 1
+    assert mg.surface_verdict(surface)["cells"] == 0
