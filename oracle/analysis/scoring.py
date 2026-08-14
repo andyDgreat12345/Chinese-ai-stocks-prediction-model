@@ -99,6 +99,58 @@ def _confidence(signals: SectorSignals, composite: float,
     return "low"
 
 
+# ── graded conviction ────────────────────────────────────────────────────
+# Five tiers, most bullish to most bearish. Adapted from the rating scale in
+# TauricResearch/TradingAgents (Phase 02 of that graft).
+#
+# This exists because the incumbent `confidence` field was unusable: it depended
+# on US spillover AGREEING with news sentiment, and while sentiment carries no
+# weight that comparison is always a tie — so every one of 8,253 directional
+# calls came out "med" and the simulator's `conviction >= med` filter filtered
+# nothing. Selectivity was impossible.
+#
+# The rating is derived from |composite| relative to the abstain threshold
+# instead, which is the quantity that is actually fitted and that varies on every
+# session. A call at twice the threshold is a genuinely stronger statement than
+# one that just cleared it, and that distinction was previously discarded.
+RATINGS_5_TIER = ("Buy", "Overweight", "Hold", "Underweight", "Sell")
+
+# Multiple of the threshold above which a call counts as strong. 2.0 keeps the
+# top tier meaningfully rare rather than relabelling half the book "Buy".
+STRONG_MULTIPLE = 2.0
+
+
+def rating(composite: float, threshold: float,
+           strong_multiple: float = STRONG_MULTIPLE) -> str:
+    """Five-tier rating from the composite. Pure.
+
+    Thresholds are inclusive at the strong boundary so a call sitting exactly on
+    it reads as the stronger tier, matching `_bucket`'s treatment of `threshold`.
+    """
+    thr = abs(float(threshold))
+    strong = thr * strong_multiple
+    if composite >= strong:
+        return "Buy"
+    if composite >= thr:
+        return "Overweight"
+    if composite <= -strong:
+        return "Sell"
+    if composite <= -thr:
+        return "Underweight"
+    return "Hold"
+
+
+def conviction_from_rating(rating_label: str) -> str:
+    """Map the 5-tier rating onto the low/med/high vocabulary the simulator and
+    the daily report already speak, so the wider scale is usable without
+    rewriting every consumer. Pure."""
+    if rating_label in ("Buy", "Sell"):
+        return "high"
+    if rating_label in ("Overweight", "Underweight"):
+        return "med"
+    return "low"
+
+
 def _sign(x: float) -> int:
     if x > 1e-9:
         return 1
@@ -125,7 +177,26 @@ def score_sector(
     composite = max(-1.0, min(1.0, composite))
 
     direction = _bucket(composite, thr)
-    confidence = _confidence(signals, composite, thr, w)
+    tier = rating(composite, thr)
+    # Graded conviction from |composite| replaces the agreement-based confidence,
+    # which was constant in practice (see RATINGS_5_TIER). The old signal-
+    # agreement read is kept only to DOWNGRADE: genuine disagreement between two
+    # weighted signals should still cost conviction, but agreement can no longer
+    # be the only route to a high one.
+    agreement = _confidence(signals, composite, thr, w)
+    confidence = conviction_from_rating(tier)
+    # A live macro event still lifts conviction (spec §4.4) — deriving the tier
+    # purely from |composite| would otherwise have silently dropped that.
+    if signals.macro_flag and direction != "neutral" and confidence == "med":
+        confidence = "high"
+    # ...but genuine disagreement between two WEIGHTED signals still costs a
+    # full step (spec §4.4). Agreement can no longer be the only route to high
+    # conviction; disagreement can still take conviction away. The composite
+    # already shrinks when signals oppose — this is the separate statement that
+    # a call assembled from sources that disagree is less trustworthy than one
+    # of the same magnitude whose sources concur.
+    elif agreement == "low":
+        confidence = {"high": "med", "med": "low"}.get(confidence, confidence)
 
     parts = [
         f"US spillover {signals.us_spillover:+.2f}",

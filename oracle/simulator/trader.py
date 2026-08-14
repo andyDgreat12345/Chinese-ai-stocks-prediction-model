@@ -39,7 +39,18 @@ _CONV_RANK = {"low": 1, "med": 2, "high": 3}
 class TraderRules:
     """The discipline. Every default is deliberately conservative."""
 
-    min_conviction: str = "med"       # ignore low-conviction calls entirely
+    # Ignore low-conviction calls entirely. Raising this to "high" is tempting
+    # and measurably WRONG: the high tier has the better DIRECTIONAL accuracy
+    # (54.5% vs 51.7%) but trading only the high tier scores worse on every
+    # metric that matters — 688 trades at 46.9% / PF 1.18 / +20.3%, against
+    # 1,173 at 49.2% / PF 1.29 / +125.4% at "med".
+    #
+    # That is not a contradiction, it is the system's central finding restated:
+    # a strong composite means a large US move, and the accuracy that buys sits
+    # in the overnight GAP, which entry at the open forfeits. Selecting harder
+    # on a signal whose edge is unreachable concentrates into exactly the
+    # sessions where the reachable part is worst.
+    min_conviction: str = "med"
     risk_per_trade_pct: float = 2.0   # % of equity risked to the stop
     stop_loss_pct: float = 3.0        # hard stop, % from entry
     take_profit_pct: float = 6.0      # target, % from entry (2:1 vs the stop)
