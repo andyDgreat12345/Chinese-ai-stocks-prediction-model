@@ -370,7 +370,37 @@ def chain_enabled() -> bool:
     return (os.environ.get("ORACLE_ANALYST_MODE") or "single").strip().lower() == "chain"
 
 
+def debate_enabled() -> bool:
+    """Whether to ALSO run the adversarial bull/bear pass (off by default).
+
+    Deliberately additive: the single pass still runs and is still recorded, so
+    the two are scored on identical sessions. Turning this on adds cost; it never
+    replaces the incumbent analyst until the measurement says it should.
+    """
+    return config._env_flag("ORACLE_ANALYST_DEBATE", False)
+
+
 # ── job entrypoint ───────────────────────────────────────────────────────
+def _record_calls(calls, trade_date, provider, model, created_at, variant) -> None:
+    """Persist parsed calls under one analyst variant."""
+    for c in calls:
+        db.upsert_llm_call({
+            "trade_date": trade_date,
+            "sector": c["sector"],
+            "provider": provider,
+            "model": model,
+            "direction": c["direction"],
+            "conviction": c["conviction"],
+            "tradeable_etf": c["tradeable_etf"],
+            "key_drivers": json.dumps(c["key_drivers"]),
+            "rationale": c["rationale"],
+            "top_pick": json.dumps(c["top_pick"]) if c.get("top_pick") else None,
+            "variant": variant,
+            "created_at": created_at,
+        })
+
+
+
 def _meter(trade_date, created_at, call_type, provider, model, usage) -> None:
     """Record one call's tokens + estimated cost in the spend meter (best-effort;
     metering must never lose the calls we already persisted)."""
@@ -402,7 +432,7 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
     (thesis → sector deep-dive → risk) when ORACLE_ANALYST_MODE=chain. Records the
     calls in `llm_calls` and meters every LLM pass. Returns the number of calls
     written; no-ops (returns 0) when the analyst is not configured. Never raises."""
-    from . import analyst_chain, divergence as dv, technicals as ta, websearch
+    from . import analyst_chain, debate, divergence as dv, technicals as ta, websearch
 
     now = datetime.now(timezone.utc)
     trade_date = trade_date or now.date().isoformat()
@@ -476,20 +506,30 @@ def run_llm_analysis(trade_date: str | None = None, llm=None, search_one=None,
             pass_usages = [{"call_type": "analyst", "model": model, "usage": usage}]
 
         calls = parse_calls(parsed, trade_date)
-        for c in calls:
-            db.upsert_llm_call({
-                "trade_date": trade_date,
-                "sector": c["sector"],
-                "provider": provider,
-                "model": model,
-                "direction": c["direction"],
-                "conviction": c["conviction"],
-                "tradeable_etf": c["tradeable_etf"],
-                "key_drivers": json.dumps(c["key_drivers"]),
-                "rationale": c["rationale"],
-                "top_pick": json.dumps(c["top_pick"]) if c.get("top_pick") else None,
-                "created_at": created_at,
-            })
+        _record_calls(calls, trade_date, provider, model, created_at,
+                      debate.VARIANT_SINGLE)
+
+        # Optional adversarial pass on the SAME context. Recorded under its own
+        # variant so both survive and the backtest can score them head-to-head;
+        # fail-soft, because an experiment must never cost the incumbent call.
+        if debate_enabled():
+            try:
+                completer = complete or (get_completer() or (None,))[0]
+                if completer is None:
+                    print("run_llm_analysis: debate needs a completer — skipping")
+                else:
+                    d_parsed, d_usages, transcript = debate.run_debate(
+                        _prompt(ctx), _SYSTEM, completer, model)
+                    d_calls = parse_calls(d_parsed, trade_date)
+                    _record_calls(d_calls, trade_date, provider, model, created_at,
+                                  debate.VARIANT_DEBATE)
+                    pass_usages += [{"call_type": u["call_type"], "model": model,
+                                     "usage": u.get("usage")} for u in d_usages]
+                    print(f"run_llm_analysis: debate wrote {len(d_calls)} call(s) "
+                          f"({len(transcript['bull'])}+{len(transcript['bear'])} chars argued)")
+            except Exception as e:  # noqa: BLE001 — never lose the single pass
+                print(f"run_llm_analysis: debate pass failed: {e!r}")
+
         # Meter every LLM pass (best-effort).
         for pu in pass_usages:
             _meter(trade_date, created_at, pu["call_type"], provider, pu["model"], pu["usage"])
