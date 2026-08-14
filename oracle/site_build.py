@@ -29,6 +29,10 @@ ENDPOINTS = {
     "correlation-accumulated": server.correlation_accumulated,
     "proven-hubs": lambda: server.proven_hubs(days=90, limit=6),
     "simulation": server.simulation,
+    # Forward evidence + where the edge sits in the bar — the two research
+    # results a reader most needs beside the headline accuracy.
+    "paper": server.paper_strategy,
+    "segments": server.segments,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,

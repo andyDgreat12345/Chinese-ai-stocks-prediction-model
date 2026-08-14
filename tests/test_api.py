@@ -95,3 +95,32 @@ def test_markets_splits_indices_sectors_metals(client):
     m = client.get("/api/markets").json()
     assert any(r["symbol"] == "^GSPC" for r in m["indices"])
     assert any(r["symbol"] == "GC=F" for r in m["metals"])
+
+
+# ── research endpoints on the dashboard ───────────────────────────────────
+def test_paper_endpoint_always_shows_the_holdout_beside_the_forward_row(client):
+    """The forward number must never be readable on its own — it is the whole
+    point that it is being compared against the retrospective claim."""
+    r = client.get("/api/paper")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["holdout_reference"]["n"] == 332
+    assert "forward" in body
+    assert body["disclaimer"]
+    assert body["rule"]["cost_pct"] > 0, "costs must be visible, not implied"
+
+
+def test_paper_endpoint_survives_an_empty_database(client):
+    body = client.get("/api/paper").json()
+    assert body["forward"].get("n", 0) >= 0
+
+
+def test_segments_endpoint_reports_capturability_not_just_accuracy(client):
+    """A 71% hit rate on a segment no entry can reach is not an edge, so the
+    flag has to travel with the number."""
+    r = client.get("/api/segments")
+    assert r.status_code == 200
+    body = r.json()
+    assert "segments" in body
+    for row in body["segments"]:
+        assert "tradeable_from_open" in row
