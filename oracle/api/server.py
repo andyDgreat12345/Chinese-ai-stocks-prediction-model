@@ -442,6 +442,53 @@ def weights() -> dict:
     return {"auto_apply": config.AUTO_APPLY_WEIGHT_ADJUSTMENTS, "rows": rows}
 
 
+@app.get("/api/paper")
+def paper_strategy() -> dict:
+    """Forward, out-of-sample record for the validated mean-reversion rule.
+
+    Shown beside the retrospective holdout it is meant to confirm or refute, so
+    the live number can never be read on its own. Every other test of this rule
+    reuses the same ten years; this is the only row that could not have been
+    fitted. Records what the rule would have done — no order is placed."""
+    from .. import paper
+
+    db.init_db()
+    try:
+        s = paper.summary()
+        return {
+            "disclaimer": config.DISCLAIMER,
+            "strategy": paper.STRATEGY,
+            "rule": {"prior_body_max": paper.PRIOR_BODY_MAX,
+                     "gap_max": paper.GAP_MAX,
+                     "cost_pct": paper.COST_PCT},
+            "holdout_reference": paper.HOLDOUT_REFERENCE,
+            "forward": s,
+            "report": paper.format_report(s),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e), "forward": {"n": 0}}
+
+
+@app.get("/api/segments")
+def segments() -> dict:
+    """Where the model's accuracy actually sits inside the daily bar, and which
+    part of it a position entered at the open can capture. The gap is the most
+    predictable segment and the least reachable — the capturability flag is the
+    number to read first."""
+    from ..analysis import segments as seg
+    from ..backtest import collect_records
+
+    db.init_db()
+    try:
+        start = config.LEARNING_TRAIN_START or None
+        rows = seg.score_segments(collect_records(start=start),
+                                  seg.build_segments(start=start))
+        return {"disclaimer": config.DISCLAIMER, "segments": rows,
+                "report": seg.format_segment_report(rows)}
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e), "segments": []}
+
+
 @app.get("/api/accuracy")
 def accuracy() -> dict:
     """Rolling directional hit-rate from scored predictions (spec §4.5, §5)."""
