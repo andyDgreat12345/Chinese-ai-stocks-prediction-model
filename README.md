@@ -31,39 +31,80 @@ and a human-in-the-loop weights table.
 
 ```
 oracle/
-  config.py        # schedule, data universe, reflection-loop guards, disclaimer
-  schema.sql       # SQLite schema — reflection loop (§4b) is first-class
-  db.py            # connection + idempotent schema init
-  scheduler.py     # APScheduler wiring, 6 cron jobs pinned to CST, SQLite jobstore
-  jobs/            # the 6 scheduled jobs (§2); ingestion jobs now wired
+  config.py        # schedule, 10-sector universe, feeds, learning + history guards
+  schema.sql       # SQLite schema — the reflection loop (§4b) is first-class
+  db.py            # connection, idempotent schema init, column/table migrations
+  scheduler.py     # APScheduler wiring, cron jobs pinned to CST
+  jobs/            # the scheduled jobs (§2)
+  run.py           # phase entrypoints used by CI/Actions (morning/afternoon/...)
+
   analysis/
-    scoring.py     # pure, testable weighted-signal scoring (§4)
-    sentiment.py   # lexicon sentiment + category classifier (§4.2, v1)
-    pipeline.py    # build_signals (US→China + sentiment) -> predictions (§4)
-    llm_analyst.py # optional AI research desk: LLM buy/sell/hold calls (§4.2)
-  ingestion/       # yfinance / akshare / RSS pulls with retries (§3)
-    _retry.py      #   exponential-backoff retry helper
+    scoring.py     # pure weighted-signal scoring -> direction + confidence
+    pipeline.py    # build_signals (US spillover, sentiment, technicals) (§4)
+    technicals.py  # Wilder RSI, MACD, SMA, momentum -> learnable signals
+    segments.py    # K-line decomposition: gap / body / wicks + tradeability
+    sentiment.py   # English lexicon sentiment + category classifier
+    sentiment_zh.py# Chinese lexicon: substring match, positional negation
+    divergence.py  # classifies sectors as follows-US / diverges / independent
+    pairs.py       # lead/lag semantics; encodes the CST/UTC session clocks
+    forecast.py    # measured probability cone for the dashboard
+    llm_analyst.py # optional AI research desk (single pass)
+    debate.py      # optional adversarial bull/bear/synthesis analyst
+    variant_scoring.py # scores analyst variants head-to-head, with a kill gate
+
+  ingestion/       # network isolated from the pure transforms, fail-soft
     us_market.py   #   US indices/ETFs/metals -> us_close
-    china_market.py#   China broad indices + sector ETFs -> china_close
-    news.py        #   RSS -> tagged headlines -> news
+    china_market.py#   China indices + 10 sector ETFs; code verification;
+                   #   per-board price limits; corporate-action neutralisation
+    news.py        #   English + Chinese RSS -> tagged headlines -> news
+    quotes.py      #   near-real-time snapshots for named picks
     macro.py       #   hand-maintained macro calendar -> macro_events
-  reflection/      # self-improvement loop (§4b, top priority)
-    stats.py       #   pure math: pearson, best-fit lag, calibration/Brier
-    scoring.py     #   (i)   prediction scoring vs actual + calibration
-    correlation.py #   (ii)  rolling US→China correlation + news-impact table
-    reflect.py     #   (iii) reflection log (rule-based; LLM-swappable)
-    llm.py         #   optional reflection LLM (Claude / DeepSeek, off by default)
-  api/
-    server.py      # FastAPI: dashboard + /api/prediction /heatmap /history
-                   #   /accuracy /leaderboard /news-impact /reflections
-                   #   /weights /markets (§5, §4b)
-  dashboard/       # terminal UI (index.html + static/{styles.css,app.js})
-  backfill.py      # one-shot historical loader (US + China) for the backtest
-  backtest.py      # evaluation engine: replay history, baselines, Sharpe, p-value
+
+  learning/        # the loop that actually moves the numbers
+    walkforward.py #   holdout split, folds, edge_t objective, coverage gate
+    autotune.py    #   fit -> judge on holdout -> adopt only on measured gain
+
+  reflection/      # daily self-assessment (§4b)
+    scoring.py stats.py correlation.py accumulate.py reflect.py llm.py
+
+  research/        # the statistics that keep findings honest
+    sweep.py       #   Fisher-z p-values, Benjamini-Hochberg, split-half
+    universe.py    #   35 US symbols, each with a written hypothesis + controls
+    marginal.py    #   conditional analysis + plateau-vs-spike validation
+    news_signal.py #   does Chinese news predict? + detectability table
+    run.py labels.py
+
+  simulator/       # what a disciplined human trader would have done
+    trader.py engine.py tune.py ranking.py
+
+  paper.py         # forward, out-of-sample ledger for the validated rule
+  backfill.py      # historical loader (10-year rolling window) + prune/repair
+  backtest.py      # replay + baselines + Sharpe + p-value (lookahead-guarded)
   costsim.py       # cost-aware net returns: friction, drawdown, break-even
-app.py             # `python app.py` -> backend + dashboard on localhost:8000
-tests/             # fixture-driven tests (scoring, sentiment, ingestion)
+  api/server.py    # FastAPI dashboard + JSON endpoints
+  site_build.py    # static snapshot build for GitHub Pages
+  dashboard/       # terminal-style UI
+tests/             # 418 tests, all network-free
 ```
+
+## What the system has actually established
+
+Measured, not assumed. Every figure below came out of the machinery above and
+several of them overturned an earlier, more flattering number.
+
+| Finding | Evidence |
+| --- | --- |
+| The model has a small real directional edge | 52% bet-accuracy over 8,251 bets, p = 1.1e-05 |
+| ...but it lives in the overnight **gap** | gap 71.1% vs body 49.3% |
+| ...which entry at the open **cannot capture** | the driving US session trades inside the gap window |
+| So the tradeable segment is a coin flip | body edge_t = −0.61 |
+| Simulator returns come from **exit discipline** | 49% win rate, 1.6:1 win/loss ratio |
+| A conditional **mean-reversion** rule does survive | holdout n=332, 59.6% hit, +0.312% net, t=+2.40 |
+| Sector-edge ranking does **not** work | worse than random ordering (25th percentile) |
+
+Three lookahead bugs, two data-integrity bugs (unadjusted corporate actions,
+fetch-clock date stamping) and one ordering artifact were found and fixed along
+the way. Each is documented in the module that fixes it.
 
 ## Quick start
 
@@ -359,8 +400,41 @@ three separable, individually auditable sub-systems:
 | 15:05 | `fetch_china_close` | log actual close vs prediction |
 | 15:15 | `reflect_and_update` | self-improvement pass (§4b) |
 
-## Open decisions before Phase 2 (spec §7)
+## Research modules (`oracle/research/` — the statistics that keep it honest)
 
-- Always-on host: own machine vs. small VPS (VPS needed for overnight runs).
-- News access: Reuters/Caixin RSS are free; Bloomberg may need a workaround.
-- v1 sentiment: lexicon-based (fastest) vs. an LLM call per headline batch.
+Sweeping enough hypotheses always produces a significant one. Every finding in
+this project has to clear the same four filters before it is reported:
+
+1. a sample floor;
+2. a Fisher-z p-value;
+3. **Benjamini-Hochberg** across *every* test run, so a reported q-value already
+   accounts for how wide the search was;
+4. **split-half stability** — both halves of the history must agree in sign.
+
+`research/sweep.py` applies these to US↔China pairs (including deliberate
+CONTROL symbols, which is how the first wide sweep was caught measuring global
+risk beta rather than China alpha). `research/marginal.py` applies them to
+conditional buckets and adds a plateau-vs-spike check: a real effect survives
+moving its threshold, a fitted one towers over its neighbours.
+
+`research/news_signal.py` reports a **detectability table** — the smallest
+effect the current history could resolve. It is what showed that a wide sweep
+would need roughly five years to detect a realistic news-sentiment effect, which
+killed a plan before it consumed months.
+
+## Forward evidence (`oracle/paper.py`)
+
+The mean-reversion rule passed every retrospective test available, but all of
+them reuse the same ten years. The paper ledger records each qualifying setup
+**before the outcome is known** and settles it after the close, so the forward
+row is the one number that could not have been fitted. It places no orders.
+
+## Open decisions
+
+- **Timing.** The measured edge sits in the overnight gap, which entry at the
+  open forfeits. Capturing it means holding overnight through the US session
+  without knowing its outcome — a different strategy, and a decision for a human.
+- **Macro ingestion is file-based** (hand-maintained JSON); a live feed is a
+  clean upgrade behind `load_from_file`.
+- **Analyst variants.** The adversarial debate analyst is built and off by
+  default; `variant_scoring.py` decides whether it stays.

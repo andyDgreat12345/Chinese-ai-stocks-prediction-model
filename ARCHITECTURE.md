@@ -157,19 +157,37 @@ human-readable accumulation.
 
 ## 7. News pipeline
 
-**Sources:** Reuters + Caixin RSS (free, configured). Bloomberg needs a
-workaround → deferred. Caixin/Sina are strong free Chinese-language options.
+**Sources:** six feeds, all verified live by item count and pubDate rather than
+HTTP status — three English (FT markets, SCMP economy, Guardian business) and
+three Chinese-language (Eastmoney market + stock, Chinanews finance).
 
-**Flow:** headline + first paragraph → lexicon sentiment (−1..1, with negation)
-+ category (fed / chip-export / tariffs / stimulus / earnings / macro). This
-feeds two distinct things:
+The Chinese feeds carry most of the weight, and the reason is structural:
+A-shares are ~97% domestically owned and >80% retail by volume, and domestic
+investors read domestic media. The English feeds describe this market to the
+wrong audience.
 
-1. **Same-day signal** — sentiment per sector enters `run_analysis` scoring.
+> The original two feeds (Reuters, Caixin Global) were both **dead** — Reuters
+> retired its public RSS endpoint and the Caixin URL 404s. Because ingestion
+> fails soft per source, nothing errored; the news table simply sat at zero rows
+> for months while the job reported success. Verify a feed by what it returns,
+> never by whether the request succeeded.
+
+**Flow:** headline + first paragraph → `analyze_any()` routes by script →
+lexicon sentiment (−1..1) + category. Chinese scoring is segmentation-free:
+substring matching, longest-first with position consumption so 涨停 is never also
+counted as 涨, with negation and intensity read positionally from the characters
+before a match. Both engines emit **one shared category vocabulary**, including
+the `general` fallback — a divergence there silently splits one bucket in two.
+
+This feeds two things:
+
+1. **Same-day signal** — sentiment per sector enters `run_analysis` scoring,
+   gated by the learner's coverage floor so a new feed cannot steer predictions
+   before it has history.
 2. **Empirical learning** — the `news_impact` table accumulates "when category X
-   appeared, China sector Y moved Z% on average," with sample size + variance.
-
-v1 sentiment is lexicon-based (fast, free, offline). Upgrade path: swap an
-LLM-per-batch classifier behind `analyze()`.
+   appeared, China sector Y moved Z% on the NEXT session" (next, not same — the
+   same-day join was a lookahead bug, since news stamped D is fetched after
+   china_close[D] has printed).
 
 ---
 
@@ -191,24 +209,40 @@ Runs at 15:15 as three separable, individually auditable sub-systems:
 
 ---
 
-## 9. Status & remaining work
+## 9. Measurement discipline
 
-**v1 is complete** — all eight build phases (§6) are done and every scheduled
-job runs real logic. The full spine runs end-to-end: ingest → predict →
-pre-open refresh → score → measure influence → reflect → feed tomorrow →
-display.
+The distinguishing property of this system is not its predictions — it is that
+it can tell when they are wrong, and has repeatedly done so at its own expense.
 
-Remaining items are operational hardening, not missing features:
+Guards that exist because something got past them once:
 
-- **Live cron run** has not been exercised against real yfinance/akshare/RSS —
-  it needs the always-on host (spec §7). Jobs fail soft, so first-run
-  surprises degrade gracefully rather than crash.
-- **Sector-ETF codes** in `config.CHINA_SECTOR_ETFS` and the **macro calendar**
-  (`data/macro_events.json`, seeded from `examples/`) should be verified on
-  first run; a wrong ETF code just leaves that sector unscored until corrected.
-- **Macro ingestion is file-based** (hand-maintained JSON). A live akshare /
-  Trading Economics RSS feed is a clean future upgrade behind `load_from_file`.
-- **v2 (spec §4.2/§7b):** swap lexicon sentiment for an LLM-per-batch
-  classifier; train a model on logged data once a few months accumulate.
-  (The Sonnet-tier reflection LLM is already wired — see §5, optional and
-  off by default.)
+| Guard | What it caught |
+| --- | --- |
+| `_prior_us_rows` / `_prior_news_rows` | three lookahead bugs pairing a session with data that postdated it |
+| `live_signals` coverage gate | a signal non-zero on 1 day of 369 counting as weightable |
+| `pin_dead_signals` | a hand-set weight that would have steered live calls the moment its feed woke |
+| `order_sensitivity` | a +65% headline that was an artifact of config ordering |
+| `implausible_moves` + per-board limits | unadjusted share conversions read as −74% market moves |
+| bar-date stamping | Saturday "sessions" invented by the fetch clock |
+| `TRADEABLE_FROM_OPEN` | a 71% hit rate on a segment no entry can capture |
+
+The pattern worth knowing when extending this: **a component that fails soft
+fails silently.** Every one of the data bugs above sat behind a job that reported
+success. When adding a source, add the check that proves it produced something —
+item count and freshness, never HTTP status.
+
+## 10. Status & remaining work
+
+**The spine is complete and running.** Ingest → predict → refresh → score →
+measure → learn → reflect → display, on GitHub Actions, with 418 tests in CI.
+
+Remaining items, honestly stated:
+
+- **The tradeable edge is unproven.** 52% bet-accuracy is significant but sits
+  in the overnight gap; the segment actually traded is 49.3%. The mean-reversion
+  rule is the strongest candidate and needs forward evidence (`oracle/paper.py`).
+- **The Chinese news layer is measured but not wired.** It enters the learner
+  automatically once coverage clears 5%.
+- **The debate analyst is off** pending its head-to-head verdict.
+- **Macro ingestion is file-based.**
+
