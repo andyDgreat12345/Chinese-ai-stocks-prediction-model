@@ -362,3 +362,31 @@ def test_empty_train_start_means_fit_on_everything(monkeypatch):
     monkeypatch.setattr(bt, "collect_records", fake)
     at.run_autotune("2026-08-09", db_path=None)
     assert seen["start"] is None
+
+
+def test_coverage_report_shows_distance_to_the_gate():
+    """Not intuitive: coverage is measured over the WHOLE training window, so
+    extending history from one year to ten made the news gate roughly six times
+    harder to reach. That is the guard working, but it should not be a surprise."""
+    from oracle.learning import autotune as at
+
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 95 + \
+           [{"us_spillover": 1.0, "sentiment": 0.4}] * 5
+    lines = "\n".join(at.format_coverage(recs))
+    assert "signal coverage" in lines
+    assert "us_spillover" in lines and "weightable" in lines
+    assert "below gate" in lines, "a signal short of the gate must say so"
+
+
+def test_coverage_actually_reaches_the_report():
+    """Regression: format_coverage existed and was tested, but the line wiring it
+    into the report silently failed to match its anchor — so it was never called.
+    A helper nobody invokes is not a feature."""
+    from oracle.learning import autotune as at
+
+    recs = [{"us_spillover": 1.0, "sentiment": 0.0}] * 95 + \
+           [{"us_spillover": 1.0, "sentiment": 0.4}] * 5
+    text = at.format_learning_report([], {}, recs)
+    assert "signal coverage" in text
+    # ...and stays absent when no records are supplied, so old callers are fine.
+    assert "signal coverage" not in at.format_learning_report([], {})

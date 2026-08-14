@@ -212,7 +212,28 @@ def rollback(sector: str, db_path=None) -> bool:
     return False
 
 
-def format_learning_report(history: list[dict], params: dict) -> str:
+def format_coverage(records: list[dict]) -> list[str]:
+    """How close each signal is to earning a weight.
+
+    Worth showing because the answer is not intuitive: coverage is measured over
+    the WHOLE training window, so extending history from one year to ten made the
+    news gate roughly six times harder to reach. A signal that is only present in
+    recent sessions will sit below the gate for a long time, and that is the
+    guard working — a weight fitted across a window where the signal is absent
+    95% of the time is fitted on the 5%. But it should not be a surprise.
+    """
+    cov = wf.signal_coverage(records)
+    live = wf.live_signals(records)
+    out = ["", f"signal coverage (a signal earns a weight at "
+               f"{wf.MIN_SIGNAL_COVERAGE:.0%} of records):"]
+    for name, share in cov.items():
+        mark = "weightable" if name in live else f"below gate"
+        out.append(f"  {name:<18}{share:>8.3%}   {mark}")
+    return out
+
+
+def format_learning_report(history: list[dict], params: dict,
+                           records: list[dict] | None = None) -> str:
     """Human-readable learning state: current parameters + recent attempts."""
     lines = ["China Market Oracle — learning state", "",
              "current per-sector parameters (learned; '*' = global default):"]
@@ -238,6 +259,8 @@ def format_learning_report(history: list[dict], params: dict) -> str:
         lines.append(f"  {row['run_date']} {row['sector']:<12} {mark:<10} "
                      f"holdout hit {hb} → {ha}  (n={row['n_holdout']})")
         lines.append(f"      {row['reason']}")
+    if records:
+        lines += format_coverage(records)
     lines += ["",
               "A change is adopted only when it beats the incumbent on a holdout "
               "window the search never saw — most runs correctly refuse. "
@@ -253,7 +276,9 @@ def main(argv: list[str]) -> int:
         return 0 if rollback(argv[1]) else 1
     if argv and argv[0] == "--report":
         db.init_db()
-        print(format_learning_report(db.learning_history(50), db.all_model_params()))
+        from ..backtest import collect_records
+        print(format_learning_report(db.learning_history(50), db.all_model_params(),
+                                     collect_records(start=config.LEARNING_TRAIN_START or None)))
         return 0
     run_autotune()
     print()
