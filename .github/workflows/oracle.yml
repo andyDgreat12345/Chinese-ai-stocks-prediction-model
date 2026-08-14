@@ -146,6 +146,10 @@ jobs:
               cp segments.md _state/segments.md || true
               # Debate vs single-pass analyst, scored only where both called the
               # same session. Reports "not yet decidable" until enough pairs exist.
+              # Forward paper record for the validated mean-reversion rule.
+              python -m oracle.paper > paper_strategy.md || true
+              cat paper_strategy.md || true
+              cp paper_strategy.md _state/paper_strategy.md || true
               python -m oracle.analysis.variant_scoring > analyst_variants.md || true
               cat analyst_variants.md || true
               cp analyst_variants.md _state/analyst_variants.md || true

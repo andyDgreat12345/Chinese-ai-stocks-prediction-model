@@ -85,6 +85,12 @@ def reflect_and_update() -> None:
     refresh_proven_pairs()     # (ii) re-measure sweep-proven pairs -> fresh factor
     generate_reflection()      # (iii) structured reflection log entry
 
+    # Forward paper record for the validated mean-reversion rule. Records one
+    # session only, so the ledger can never be backfilled into looking like
+    # evidence it is not. Places no orders.
+    from ..paper import record as _paper
+    _paper()
+
 
 def autotune() -> None:
     """15:30 CST — the empirical learning pass. Refits per-sector signal weights

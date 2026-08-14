@@ -261,3 +261,34 @@ VALUES
     ('us_spillover', 0.45, 0.45, '1970-01-01'),
     ('sentiment',    0.35, 0.35, '1970-01-01'),
     ('macro',        0.20, 0.20, '1970-01-01');
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PAPER STRATEGY LEDGER
+-- Forward, out-of-sample record for a research rule that has passed
+-- retrospective validation but has never been tested on data that did not
+-- exist when it was found. Every retrospective test reuses the same ten years;
+-- only this table accumulates evidence that cannot have been fitted.
+--
+-- A row is written the moment a setup fires (entry known, outcome NULL) and
+-- filled in once the session closes. Writing it up front is what makes it
+-- honest: a ledger that only records entries it later likes is a backtest.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date    TEXT NOT NULL,          -- the China session traded
+    sector        TEXT NOT NULL,
+    strategy      TEXT NOT NULL,          -- rule identifier
+    -- The conditions as measured at entry, so a later reader can check the
+    -- setup really qualified rather than trusting that it did.
+    prior_body    REAL,
+    gap           REAL,
+    entry_price   REAL,
+    -- Filled at the close. NULL while the session is open.
+    exit_price    REAL,
+    body_pct      REAL,                   -- open -> close, the segment traded
+    net_pct       REAL,                   -- body minus modelled round-trip cost
+    outcome       TEXT,                   -- win / loss / open
+    recorded_at   TEXT NOT NULL,
+    settled_at    TEXT,
+    UNIQUE (trade_date, sector, strategy)
+);

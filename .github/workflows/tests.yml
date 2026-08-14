@@ -1,0 +1,60 @@
+name: Tests
+
+# The test suite had no CI: 408 tests only ever ran on a developer's machine,
+# so a PR could be merged red and nobody would know. This runs them on every
+# push and pull request.
+#
+# Deliberately offline. Every test in this suite is network-free by design —
+# ingestion isolates the fetch from the pure transform precisely so the
+# transforms can be tested without a network — and keeping CI offline means a
+# rate-limited Eastmoney or a dead RSS feed can never turn the build red for a
+# reason that has nothing to do with the change under review.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer commit on the same branch supersedes an in-flight run.
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the suite
+        # No API keys and no state DB are provided on purpose: the analyst,
+        # reflection and quote backends must all stay optional and fail soft, and
+        # a suite that silently depended on one would fail loudly here.
+        run: python -m pytest -q
+
+      - name: Guard against an accidentally network-dependent test
+        # A test that reaches the internet passes locally and then fails at 3am
+        # for reasons unrelated to anyone's change. This is a cheap smoke check
+        # that the suite still runs with outbound DNS pointed at nothing.
+        run: |
+          python - <<'PY'
+          import socket
+          def blocked(*a, **k):
+              raise OSError("network disabled for this check")
+          socket.socket.connect = blocked
+          socket.create_connection = blocked
+          import pytest, sys
+          sys.exit(pytest.main(["-q"]))
+          PY
