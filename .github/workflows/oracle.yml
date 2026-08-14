@@ -54,6 +54,10 @@ jobs:
       # spend meter); leave unset for the single-pass analyst. ORACLE_ANALYST_THESIS_MODEL
       # optionally runs pass 1 on a reasoning model, e.g. deepseek-reasoner.
       ORACLE_ANALYST_MODE: ${{ vars.ORACLE_ANALYST_MODE }}
+      # Phase 01 of the TradingAgents graft: run an adversarial bull/bear pass
+      # ALONGSIDE the single pass so both are scored on identical sessions.
+      # Off unless the repo variable is set; ~3x analyst cost while on.
+      ORACLE_ANALYST_DEBATE: ${{ vars.ORACLE_ANALYST_DEBATE }}
       ORACLE_ANALYST_THESIS_MODEL: ${{ vars.ORACLE_ANALYST_THESIS_MODEL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -140,6 +144,11 @@ jobs:
               python -m oracle.analysis.segments > segments.md || true
               cat segments.md || true
               cp segments.md _state/segments.md || true
+              # Debate vs single-pass analyst, scored only where both called the
+              # same session. Reports "not yet decidable" until enough pairs exist.
+              python -m oracle.analysis.variant_scoring > analyst_variants.md || true
+              cat analyst_variants.md || true
+              cp analyst_variants.md _state/analyst_variants.md || true
               python -m oracle.simulator.tune > rule_tuning.md || true
               cat rule_tuning.md || true
               cp rule_tuning.md _state/rule_tuning.md || true ;;

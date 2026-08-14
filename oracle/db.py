@@ -24,6 +24,48 @@ def _add_column_if_missing(conn, table: str, col: str, decl: str) -> None:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
+def _migrate_llm_calls_variant(conn) -> None:
+    """Widen llm_calls' unique key from (trade_date, sector) to include `variant`.
+
+    SQLite cannot drop a table constraint, so an existing state DB needs the
+    table rebuilt. Without this the debate analyst would silently OVERWRITE the
+    single-pass call for the same session — destroying the head-to-head
+    comparison that is the entire point of running both.
+
+    Idempotent: detected by the presence of the `variant` column.
+    """
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(llm_calls)")}
+    if not have or "variant" in have:
+        return                      # fresh DB (schema.sql already correct) or done
+    conn.executescript("""
+        ALTER TABLE llm_calls RENAME TO llm_calls_old;
+        CREATE TABLE llm_calls (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_date    TEXT NOT NULL,
+            sector        TEXT NOT NULL,
+            provider      TEXT,
+            model         TEXT,
+            direction     TEXT NOT NULL,
+            conviction    TEXT NOT NULL,
+            tradeable_etf TEXT,
+            key_drivers   TEXT,
+            rationale     TEXT,
+            top_pick      TEXT,
+            variant       TEXT NOT NULL DEFAULT 'single',
+            created_at    TEXT NOT NULL,
+            UNIQUE (trade_date, sector, variant)
+        );
+        INSERT INTO llm_calls
+            (trade_date, sector, provider, model, direction, conviction,
+             tradeable_etf, key_drivers, rationale, top_pick, variant, created_at)
+        SELECT trade_date, sector, provider, model, direction, conviction,
+               tradeable_etf, key_drivers, rationale, top_pick, 'single', created_at
+        FROM llm_calls_old;
+        DROP TABLE llm_calls_old;
+    """)
+    print("db: migrated llm_calls to a per-variant unique key")
+
+
 def init_db(db_path: Path | str | None = None) -> None:
     """Create all tables from schema.sql (idempotent) + apply column migrations."""
     schema = (Path(__file__).resolve().parent / "schema.sql").read_text()
@@ -32,6 +74,7 @@ def init_db(db_path: Path | str | None = None) -> None:
         conn.executescript(schema)
         # Migrations for restored older state DBs:
         _add_column_if_missing(conn, "llm_calls", "top_pick", "TEXT")  # JSON single-name pick
+        _migrate_llm_calls_variant(conn)
         for tbl in ("us_close", "china_close"):        # OHLC for candlesticks
             for col in ("open", "high", "low"):
                 _add_column_if_missing(conn, tbl, col, "REAL")
@@ -319,15 +362,17 @@ def upsert_llm_call(row: dict, db_path=None) -> None:
     the rule-based `predictions` so its edge can be measured independently."""
     conn = connect(db_path)
     try:
-        row = {"top_pick": None, **row}   # tolerate callers that omit top_pick
+        # tolerate callers that omit either optional field
+        row = {"top_pick": None, "variant": "single", **row}
         conn.execute(
             """INSERT INTO llm_calls
                    (trade_date, sector, provider, model, direction, conviction,
-                    tradeable_etf, key_drivers, rationale, top_pick, created_at)
+                    tradeable_etf, key_drivers, rationale, top_pick, variant, created_at)
                VALUES
                    (:trade_date, :sector, :provider, :model, :direction, :conviction,
-                    :tradeable_etf, :key_drivers, :rationale, :top_pick, :created_at)
-               ON CONFLICT(trade_date, sector) DO UPDATE SET
+                    :tradeable_etf, :key_drivers, :rationale, :top_pick, :variant,
+                    :created_at)
+               ON CONFLICT(trade_date, sector, variant) DO UPDATE SET
                     provider=excluded.provider, model=excluded.model,
                     direction=excluded.direction, conviction=excluded.conviction,
                     tradeable_etf=excluded.tradeable_etf,

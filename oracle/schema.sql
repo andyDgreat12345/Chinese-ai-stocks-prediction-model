@@ -102,8 +102,14 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     key_drivers   TEXT,                   -- JSON array of strings
     rationale     TEXT,
     top_pick      TEXT,                   -- JSON {ticker,name,tradeable,note}: single name to watch
+    -- Which analyst produced this call: 'single' (one pass) or 'debate'
+    -- (bull/bear advocacy + synthesis). Both may exist for the same session so
+    -- the two can be scored head-to-head on identical inputs; without the
+    -- variant in the key, running one would overwrite the other and the
+    -- comparison the debate exists to settle could never be made.
+    variant       TEXT NOT NULL DEFAULT 'single',
     created_at    TEXT NOT NULL,
-    UNIQUE (trade_date, sector)
+    UNIQUE (trade_date, sector, variant)
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
