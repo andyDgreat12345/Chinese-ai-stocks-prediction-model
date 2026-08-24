@@ -34,7 +34,7 @@ friction the edge can absorb before it is gone.
 """
 from __future__ import annotations
 
-from .exit_horizon import HORIZONS, _stats, build_paths, simulate
+from .exit_horizon import T0_EXIT, T1_EXIT, _stats, build_paths, simulate
 from ..paper import COST_PCT, qualifies
 
 # Extra round-trip friction to test, in percent, on top of the cost already
@@ -42,10 +42,6 @@ from ..paper import COST_PCT, qualifies
 # fill on both sides of an illiquid one.
 SLIPPAGE_STEPS = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50)
 
-# The earliest exit available if these ETFs settle T+1. Taken from the exit
-# study rather than redefined, so the two modules cannot drift apart.
-T1_EXIT = "open_d1"
-T0_EXIT = "close_d0"
 
 
 def slippage_curve(rows: list[dict], horizon: str = T0_EXIT,

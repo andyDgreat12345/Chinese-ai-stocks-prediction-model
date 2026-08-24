@@ -49,6 +49,13 @@ from . import sweep as sw
 # bar and which side of it the position is closed on.
 HORIZONS = ("close_d0", "open_d1", "close_d1", "close_d2")
 
+# The same-session exit the rule was validated on, and the earliest exit that
+# would remain available if these instruments settle T+1. Named here beside the
+# horizons themselves so every module that reasons about settlement reads one
+# definition.
+T0_EXIT = "close_d0"
+T1_EXIT = "open_d1"
+
 # What each horizon adds to the one before it, for the report.
 HORIZON_NOTE = {
     "close_d0": "same-session body (the validated exit)",
