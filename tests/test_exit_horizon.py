@@ -140,3 +140,15 @@ def test_report_renders_from_empty_and_measured_states():
     res = eh.simulate(rows, holdout_frac=0.5)
     text = eh.format_report(res, eh.verdict(res))
     assert "Exit horizon" in text and "Not investment advice" in text
+
+
+def test_unmeasurable_verdict_still_answers_the_question_it_is_asked():
+    """Callers read `keep_current_exit`, so it must always exist.
+
+    A study that could not measure anything is not a licence to change the
+    exit; the safe default is the one already validated.
+    """
+    for res in ({"status": "no_data"}, {}, {"status": "measured"}):
+        v = eh.verdict(res)
+        assert v["keep_current_exit"] is True
+        assert v["best"] == eh.T0_EXIT

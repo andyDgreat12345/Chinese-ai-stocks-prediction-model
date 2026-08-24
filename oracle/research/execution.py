@@ -126,8 +126,10 @@ def format_report(curve: list[dict], be: dict, sett: dict) -> str:
 
     # ── settlement ───────────────────────────────────────────────────────
     L += ["  1. Settlement: can this rule be executed at all?", ""]
-    if sett.get("status") != "measured":
-        L.append(f"     {sett.get('status')}")
+    measured = sett.get("status") == "measured"
+    if not measured:
+        L += [f"     Not measurable here ({sett.get('status')}) — but the question",
+              "     below does not go away just because there are no trades to price."]
     else:
         t0, t1 = sett["t0"], sett["t1"]
         L += [f"     {'exit':22}{'n':>7}{'hit':>8}{'net':>10}{'t':>8}",
@@ -143,16 +145,20 @@ def format_report(curve: list[dict], be: dict, sett: dict) -> str:
         if sett["cost_of_constraint"] is not None:
             L += ["", f"     Cost of the T+1 constraint: "
                       f"{sett['cost_of_constraint']:+.3f}% per trade."]
-        L += ["",
-              "     The rule as validated exits at the same session's close. Every",
-              "     instrument here is a domestic A-share equity ETF, and mainland",
-              "     equities settle T+1 — shares bought today cannot be sold until",
-              "     the next session. If that applies to these ETFs, the validated",
-              "     exit is not executable and the T+1 row is the real rule.",
-              "",
-              "     VERIFY THIS WITH THE BROKER BEFORE FUNDING ANYTHING. It cannot",
-              "     be determined from price data, and it decides which row above is",
-              "     the honest one."]
+    # Unconditional: a caveat that only appears when the numbers happen to
+    # compute is a caveat that will be missing on exactly the run where someone
+    # reads the report and decides to fund something.
+    L += ["",
+          "     The rule as validated exits at the same session's close. Every",
+          "     instrument here is a domestic A-share equity ETF, and mainland",
+          "     equities settle T+1 — shares bought today cannot be sold until",
+          "     the next session. If that applies to these ETFs, the validated",
+          "     exit is not executable and the T+1 row is the real rule.",
+          "",
+          "     VERIFY THIS WITH THE BROKER BEFORE FUNDING ANYTHING. It cannot",
+          "     be determined from price data, and it decides which row above is",
+          "     the honest one."]
+    if measured:
         if sett["survives_t1"]:
             L += ["", "     The rule stays profitable and significant under the",
                   "     constraint, so this is a question of degree, not of viability."]

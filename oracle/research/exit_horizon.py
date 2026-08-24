@@ -228,6 +228,79 @@ def drift_decomposition(rows: list[dict]) -> dict:
     }
 
 
+def premium_economics(rows: list[dict], predicate=None,
+                      cost_pct: float = COST_PCT) -> dict:
+    """Why the intraday premium survives, and what the rule actually does. Pure.
+
+    The obvious trade against a negative overnight drift is to be long during
+    every session and flat every night. It does not work, and the reason is the
+    most useful single fact about this edge: the premium is smaller than the
+    friction needed to harvest it. Buying every open and selling every close
+    earns +0.11% gross and loses money after a 0.15% round trip.
+
+    That is why a decade-long, strongly significant anomaly has not been
+    competed away — at retail friction it is not an opportunity, and anyone
+    trying to harvest it indiscriminately pays for the privilege.
+
+    It also reframes what the validated rule is for. The rule is not a bet on
+    direction so much as a **filter on magnitude**: it identifies the small
+    minority of sessions whose intraday drift is a large multiple of normal,
+    which is the only condition under which the premium clears its costs. Stated
+    that way, "how much bigger than normal, and on how few sessions" is the
+    number that decides whether the rule is worth anything.
+    """
+    if predicate is None:
+        predicate = lambda r: qualifies(r.get("prior_body"), r.get("gap"))  # noqa: E731
+    every = [r[T0_EXIT] for r in rows if r.get(T0_EXIT) is not None]
+    picked = [r[T0_EXIT] for r in rows
+              if predicate(r) and r.get(T0_EXIT) is not None]
+    if not every or not picked:
+        return {"status": "no_data"}
+    m_all = sum(every) / len(every)
+    m_rule = sum(picked) / len(picked)
+    return {
+        "status": "measured",
+        "n_all": len(every), "n_rule": len(picked),
+        "fire_rate": round(len(picked) / len(every), 4),
+        "premium_all": round(m_all, 4),
+        "premium_all_net": round(m_all - cost_pct, 4),
+        "premium_rule": round(m_rule, 4),
+        "premium_rule_net": round(m_rule - cost_pct, 4),
+        "multiple": round(m_rule / m_all, 2) if m_all else None,
+        "cost_pct": cost_pct,
+        "harvestable_unconditionally": bool(m_all > cost_pct),
+    }
+
+
+def format_premium(e: dict) -> str:
+    if e.get("status") != "measured":
+        return "  premium economics: not enough data"
+    L = ["  Why this survives, and what the rule is actually for", "",
+         f"  {'sessions traded':26}{'n':>7}{'gross':>10}{'net':>10}",
+         f"  {'-' * 53}",
+         f"  {'every session':26}{e['n_all']:>7}{e['premium_all']:>+9.4f}%"
+         f"{e['premium_all_net']:>+9.4f}%",
+         f"  {'only when the rule fires':26}{e['n_rule']:>7}"
+         f"{e['premium_rule']:>+9.4f}%{e['premium_rule_net']:>+9.4f}%", ""]
+    if not e["harvestable_unconditionally"]:
+        L += [f"  Being long every session and flat every night LOSES money: the",
+              f"  {e['premium_all']:+.4f}% premium is smaller than the {e['cost_pct']:.2f}% "
+              f"round trip needed",
+              "  to collect it. That is why a decade-long, strongly significant",
+              "  anomaly has not been competed away — at retail friction it is not",
+              "  an opportunity."]
+    else:
+        L += ["  The premium exceeds the assumed friction, so it could in principle",
+              "  be harvested unconditionally. Treat that as a reason to doubt the",
+              "  cost assumption before trusting the finding."]
+    L += ["",
+          f"  The rule fires on {e['fire_rate']:.2%} of sessions and selects intraday",
+          f"  drift {e['multiple']}x normal. It is better understood as a filter on",
+          "  magnitude than as a bet on direction: the premium only clears its costs",
+          "  on the minority of sessions where it is a large multiple of average."]
+    return "\n".join(L)
+
+
 def format_drift(d: dict) -> str:
     o, i = d["overnight"], d["intraday"]
     if o["mean"] is None or i["mean"] is None:
@@ -318,7 +391,8 @@ def simulate(rows: list[dict], predicate=None, cost_pct: float = COST_PCT,
 
     out = {"status": "measured", "cost_pct": cost_pct,
            "split_date": parts["holdout"][0]["date"] if parts["holdout"] else None,
-           "drift": drift_decomposition(usable)}
+           "drift": drift_decomposition(usable),
+           "premium": premium_economics(usable, predicate, cost_pct)}
     for part_name, part in parts.items():
         picked = [r for r in part if predicate(r)]
         block = {}
@@ -346,7 +420,12 @@ def verdict(res: dict, q: float = sw.FDR_Q) -> dict:
     best of four draws.
     """
     if res.get("status") != "measured" or "holdout" not in res:
-        return {"status": res.get("status", "no_data")}
+        # An unmeasurable study is not a licence to change anything. The safe
+        # default is the exit already validated, and callers read this key
+        # rather than the status, so it must always be present.
+        return {"status": res.get("status", "no_data"),
+                "keep_current_exit": True, "best": T0_EXIT,
+                "validated_exit": T0_EXIT}
     hold = res["holdout"]
     ps = [hold[h]["excess_p"] for h in HORIZONS]
     _, threshold = sw.benjamini_hochberg(ps, q=q)
@@ -396,6 +475,8 @@ def format_report(res: dict, v: dict) -> str:
         L.append("")
     if res.get("drift"):
         L += [format_drift(res["drift"]), ""]
+    if res.get("premium"):
+        L += [format_premium(res["premium"]), ""]
     L += ["  'vs base' is the rule's mean gross return minus what holding EVERY",
           "  session for the same horizon earned. That control is the whole test:",
           "  each horizon carries its own drift — positive where it adds a session,",

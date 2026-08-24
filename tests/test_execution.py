@@ -103,3 +103,15 @@ def test_report_renders_and_carries_the_settlement_warning():
                             ex.settlement_comparison(rows, holdout_frac=0.5))
     assert "VERIFY THIS WITH THE BROKER" in text
     assert "T+1" in text and "Not investment advice" in text
+
+
+def test_settlement_warning_prints_even_with_no_trades_to_price():
+    """The caveat must not depend on the numbers computing.
+
+    A warning that appears only when there is data is missing on exactly the
+    run where someone reads the report and decides to fund something.
+    """
+    text = ex.format_report(ex.slippage_curve([]), ex.breakeven([]),
+                            ex.settlement_comparison([]))
+    assert "VERIFY THIS WITH THE BROKER" in text
+    assert "T+1" in text

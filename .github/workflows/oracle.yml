@@ -168,7 +168,23 @@ jobs:
               cat marginal_report.md || true
               cp marginal_report.md _state/marginal_report.md || true
               python -m oracle.research.news_signal > news_signal_report.md || true
-              cp news_signal_report.md _state/news_signal_report.md || true ;;
+              cp news_signal_report.md _state/news_signal_report.md || true
+              # Three checks on the one validated rule. Each is fail-soft: a
+              # research result must never break the data run.
+              # Is the same-session exit the right one, and where does the
+              # market's return actually accrue (overnight vs intraday)?
+              python -m oracle.research.exit_horizon > exit_horizon.md || true
+              cat exit_horizon.md || true
+              cp exit_horizon.md _state/exit_horizon.md || true
+              # Can the rule be executed at all under T+1 settlement, and how
+              # much slippage does it survive?
+              python -m oracle.research.execution > execution.md || true
+              cat execution.md || true
+              cp execution.md _state/execution.md || true
+              # Is the edge broad, or one lucky corner of the data?
+              python -m oracle.research.regimes > regimes.md || true
+              cat regimes.md || true
+              cp regimes.md _state/regimes.md || true ;;
             *)                           # morning / afternoon / all daily jobs
               python -m oracle.run "$phase" ;;
           esac

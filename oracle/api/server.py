@@ -469,6 +469,83 @@ def paper_strategy() -> dict:
         return {"disclaimer": config.DISCLAIMER, "error": str(e), "forward": {"n": 0}}
 
 
+@app.get("/api/execution")
+def execution_realism() -> dict:
+    """Whether the validated rule can be executed, and what friction it survives.
+
+    Two threats that never appear in a hit rate. Settlement: every instrument
+    here is a domestic A-share equity ETF, and mainland equities settle T+1, so
+    the rule's same-session exit may not be placeable at all — the answer is
+    priced both ways rather than assumed. Slippage: how much extra friction the
+    edge absorbs before it is gone, expressed against the daily move because
+    shortfall scales with volatility rather than with a fixed tick.
+
+    Fail-soft: a research endpoint must never take the dashboard down."""
+    from ..research import execution as ex
+    from ..research.exit_horizon import build_paths
+
+    try:
+        rows = build_paths(start=config.LEARNING_TRAIN_START or None)
+        curve = ex.slippage_curve(rows)
+        be = ex.breakeven(rows)
+        sett = ex.settlement_comparison(rows)
+        return {
+            "disclaimer": config.DISCLAIMER,
+            "settlement": sett, "slippage": curve, "breakeven": be,
+            "report": ex.format_report(curve, be, sett),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e)}
+
+
+@app.get("/api/exit-horizon")
+def exit_horizon() -> dict:
+    """How long the validated rule should hold, and where the market's return sits.
+
+    The rule's same-session exit was never tested against alternatives — it is
+    simply the horizon it was found on. This scores four exits on the same
+    holdout, each against the drift of holding every session that long, and
+    carries the overnight/intraday decomposition that explains the answer.
+
+    Fail-soft: a research endpoint must never take the dashboard down."""
+    from ..research import exit_horizon as eh
+
+    try:
+        rows = eh.build_paths(start=config.LEARNING_TRAIN_START or None)
+        res = eh.simulate(rows)
+        v = eh.verdict(res)
+        return {
+            "disclaimer": config.DISCLAIMER,
+            "verdict": v, "drift": res.get("drift"),
+            "premium": res.get("premium"),
+            "holdout": res.get("holdout"),
+            "report": eh.format_report(res, v),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e)}
+
+
+@app.get("/api/regimes")
+def regimes() -> dict:
+    """Whether the edge is broad or lives in one corner of the data.
+
+    Scores the validated rule across six pre-registered families and reports
+    agreement within each. Deliberately not a search: no bucket is ever selected
+    to trade, and the sign test is run per family because the families overlap
+    and pooling them counts every trade once per family.
+
+    Fail-soft: a research endpoint must never take the dashboard down."""
+    from ..research import regimes as rg
+    from ..research.exit_horizon import build_paths
+
+    try:
+        res = rg.analyse(build_paths(start=config.LEARNING_TRAIN_START or None))
+        return {"disclaimer": config.DISCLAIMER, "result": res,
+                "report": rg.format_report(res)}
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e)}
+
+
 @app.get("/api/segments")
 def segments() -> dict:
     """Where the model's accuracy actually sits inside the daily bar, and which

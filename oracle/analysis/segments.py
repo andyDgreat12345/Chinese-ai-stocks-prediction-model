@@ -160,6 +160,15 @@ def format_segment_report(rows: list[dict]) -> str:
           "",
           "  The body is what a position entered at the open actually earns.",
           "",
+          "  That is less of a loss than it sounds, and this report used to imply",
+          "  otherwise. Over ten years the gap carries a mean of -0.072% per session",
+          "  (t=-14.4) while the body carries +0.110% (t=+10.2): all of the market's",
+          "  return accrues while it is open, and the overnight window is a",
+          "  persistent drag, in 10/10 sectors and 11/11 years. Entering at the open",
+          "  is not forfeiting the profitable segment — it is sitting out the losing",
+          "  one. See `oracle.research.exit_horizon` for the decomposition and for",
+          "  what happens when the position is held overnight anyway.",
+          "",
           "  Not investment advice."]
     return "\n".join(L)
 

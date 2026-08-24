@@ -124,3 +124,51 @@ def test_segments_endpoint_reports_capturability_not_just_accuracy(client):
     assert "segments" in body
     for row in body["segments"]:
         assert "tradeable_from_open" in row
+
+
+def test_execution_endpoint_carries_the_settlement_question(client):
+    """The T+1 question decides whether the rule is placeable at all, so it must
+    reach the dashboard rather than living in a commit message."""
+    r = client.get("/api/execution")
+    assert r.status_code == 200
+    body = r.json()
+    assert "disclaimer" in body
+    if "error" not in body:
+        assert "settlement" in body and "slippage" in body
+        assert "VERIFY THIS WITH THE BROKER" in body["report"]
+
+
+def test_exit_horizon_endpoint_reports_a_verdict_not_just_numbers(client):
+    r = client.get("/api/exit-horizon")
+    assert r.status_code == 200
+    body = r.json()
+    assert "disclaimer" in body
+    if "error" not in body:
+        assert "verdict" in body
+        assert "keep_current_exit" in body["verdict"]
+
+
+def test_regimes_endpoint_never_pools_the_sign_test(client):
+    """Pooling overlapping families manufactures significance; the endpoint must
+    expose per-family agreement and no pooled p-value."""
+    r = client.get("/api/regimes")
+    assert r.status_code == 200
+    body = r.json()
+    assert "disclaimer" in body
+    if "error" not in body and body["result"].get("status") == "measured":
+        assert "agreement" in body["result"]
+        assert "sign_p" not in body["result"]
+
+
+def test_research_endpoints_fail_soft_on_a_broken_database(client, monkeypatch):
+    """A research result must never take the dashboard down."""
+    from oracle.research import exit_horizon as eh
+
+    def boom(*a, **k):
+        raise RuntimeError("db exploded")
+
+    monkeypatch.setattr(eh, "build_paths", boom)
+    for path in ("/api/execution", "/api/exit-horizon", "/api/regimes"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert "error" in r.json(), path
