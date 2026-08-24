@@ -241,6 +241,26 @@ function drawEquity(curve, start) {
   return svg;
 }
 
+// Research endpoints all return a preformatted `report` plus structured
+// fields. Rendering the report verbatim keeps one wording in one place: the
+// text a reader sees on the dashboard is the same text the scheduled job wrote
+// to oracle-state, so the two can never drift into telling different stories.
+function researchPanel(endpoint, note) {
+  return async function render(body) {
+    let d;
+    try { d = await getJSON(endpoint); }
+    catch (e) { return void (body.innerHTML = emptyNote(`unavailable (${esc(String(e.message || e))})`)); }
+    if (d.error) return void (body.innerHTML = emptyNote(`unavailable — ${esc(d.error)}`));
+    const text = d.report || "";
+    if (!text.trim()) return void (body.innerHTML = emptyNote("not measured yet"));
+    body.innerHTML = "";
+    if (note) body.appendChild(el("div", "dim", esc(note)));
+    const pre = el("pre", "research");
+    pre.textContent = text;              // textContent, never innerHTML
+    body.appendChild(pre);
+  };
+}
+
 // ── panel registry ─────────────────────────────────────────────────────
 // Each panel: { id, title, wide?, render(bodyEl) -> Promise }
 const PANELS = [
@@ -265,6 +285,33 @@ const PANELS = [
         for (const m of items) body.appendChild(reportItem(m));
       }
     },
+  },
+  {
+    id: "paper", title: "Forward Ledger — the one number not fitted", wide: true,
+    render: researchPanel("paper",
+      "Recorded before each outcome was known. Both settlement legs are kept "
+      + "because the T+1 question is unresolved."),
+  },
+  {
+    id: "exit-horizon", title: "Exit Horizon — how long to hold", wide: true,
+    render: researchPanel("exit-horizon",
+      "Where the market's return actually accrues, and whether holding "
+      + "overnight helps. It does not."),
+  },
+  {
+    id: "execution", title: "Execution Realism — settlement and slippage", wide: true,
+    render: researchPanel("execution",
+      "Whether the validated rule can be placed at all, and how much bad fill "
+      + "it survives."),
+  },
+  {
+    id: "regimes", title: "Regime Robustness — broad, or one lucky corner?", wide: true,
+    render: researchPanel("regimes",
+      "Not a search. No bucket here is ever selected to trade."),
+  },
+  {
+    id: "segments", title: "K-line Segments — where the edge sits", wide: true,
+    render: researchPanel("segments"),
   },
   {
     id: "simulation", title: "Trader Simulation (paper)", wide: true,
