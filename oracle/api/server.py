@@ -491,10 +491,12 @@ def execution_realism() -> dict:
         curve = ex.slippage_curve(rows)
         be = ex.breakeven(rows)
         sett = ex.settlement_comparison(rows)
+        sur = ex.settlement_surface(rows)
         return {
             "disclaimer": config.DISCLAIMER,
             "settlement": sett, "slippage": curve, "breakeven": be,
-            "report": ex.format_report(curve, be, sett),
+            "surface": {k: v["verdict"] for k, v in sur.items()},
+            "report": ex.format_report(curve, be, sett, sur),
         }
     except Exception as e:  # noqa: BLE001
         return {"disclaimer": config.DISCLAIMER, "error": str(e)}

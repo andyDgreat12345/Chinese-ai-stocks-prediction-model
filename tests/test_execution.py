@@ -115,3 +115,57 @@ def test_settlement_warning_prints_even_with_no_trades_to_price():
                             ex.settlement_comparison([]))
     assert "VERIFY THIS WITH THE BROKER" in text
     assert "T+1" in text
+
+
+def _grid_rows(n=800, t0=1.0, t1=1.0):
+    """Rows spanning the threshold grid so every cell clears its sample floor."""
+    rows = []
+    for i in range(n):
+        rows.append({"sector": "s", "date": f"2024-{i:04d}",
+                     # spread across the grid so all 36 cells populate
+                     "prior_body": -0.6 - (i % 12) * 0.1,
+                     "gap": -0.2 - (i % 9) * 0.1,
+                     "close_d0": t0, "open_d1": t1,
+                     "close_d1": t1, "close_d2": t1})
+    return rows
+
+
+def test_surface_judges_both_legs_by_one_plateau_definition():
+    from oracle.research.marginal import MAX_PLATEAU_RATIO
+
+    sur = ex.settlement_surface(_grid_rows())
+    assert set(sur) == {"t0", "t1"}
+    for leg in ("t0", "t1"):
+        v = sur[leg]["verdict"]
+        assert v["cells"] > 0
+        assert v["plateau"] is True
+        assert v["spread_ratio"] <= MAX_PLATEAU_RATIO
+
+
+def test_surface_fails_the_leg_that_does_not_hold_up():
+    """A plateau under T+0 says nothing about an unexecutable T+1 exit."""
+    sur = ex.settlement_surface(_grid_rows(t0=1.0, t1=-1.0))
+    assert sur["t0"]["verdict"]["plateau"] is True
+    assert sur["t1"]["verdict"]["plateau"] is False
+    assert sur["t1"]["verdict"]["positive"] == 0
+
+
+def test_surface_grid_is_fixed_not_searched():
+    """The cells are pre-registered around the validated thresholds.
+
+    Selecting the best cell would be dredging the same ten years twice, so the
+    grid must be a constant and the report must not name a winner.
+    """
+    assert -0.96 in ex.PRIOR_GRID and -0.40 in ex.GAP_GRID
+    text = ex.format_report(ex.slippage_curve(_grid_rows()),
+                            ex.breakeven(_grid_rows()),
+                            ex.settlement_comparison(_grid_rows(), holdout_frac=0.5),
+                            ex.settlement_surface(_grid_rows()))
+    assert "nothing is" in text and "selected from it" in text
+    assert "dredging" in text
+
+
+def test_surface_absent_does_not_break_the_report():
+    text = ex.format_report(ex.slippage_curve([]), ex.breakeven([]),
+                            ex.settlement_comparison([]))
+    assert "Not investment advice" in text

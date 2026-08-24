@@ -121,7 +121,74 @@ def settlement_comparison(rows: list[dict], predicate=None,
     }
 
 
-def format_report(curve: list[dict], be: dict, sett: dict) -> str:
+# The neighbourhood around the validated thresholds (prior body <= -0.96%,
+# gap <= -0.40%). Fixed here rather than searched: the point is to look at the
+# cells around the chosen ones, not to find better ones.
+PRIOR_GRID = (-0.6, -0.8, -0.96, -1.1, -1.3, -1.5)
+GAP_GRID = (-0.2, -0.3, -0.40, -0.5, -0.7, -0.9)
+
+
+def settlement_surface(rows: list[dict], prior_grid=PRIOR_GRID,
+                       gap_grid=GAP_GRID, cost_pct: float = COST_PCT,
+                       min_n: int = 60) -> dict:
+    """Does the rule's parameter plateau survive the T+1 constraint? Pure.
+
+    The rule was validated partly on a 6x6 surface where every cell was
+    positive — evidence that the thresholds sit on a plateau rather than on a
+    fitted boundary. That surface was built on the same-session exit. If T+1 is
+    the real constraint, the plateau has to be re-checked on the exit that would
+    actually be available, because a plateau that only exists for an
+    unexecutable exit is not evidence about anything tradeable.
+
+    This is a confirmation, not a search. The grid is fixed around the validated
+    thresholds and nothing is selected from it; the only question asked is
+    whether the neighbourhood still holds up. Re-fitting the thresholds to the
+    T+1 exit would be exactly the dredging the rest of this system refuses, and
+    would burn the same ten years to do it.
+
+    Reuses ``marginal.sensitivity_surface`` and its plateau verdict so both
+    settlement legs are judged by one definition of "plateau".
+    """
+    from .marginal import sensitivity_surface, surface_verdict
+
+    out = {}
+    for leg, key in (("t0", T0_EXIT), ("t1", T1_EXIT)):
+        # sensitivity_surface reads the return under the key `body`; feeding it
+        # the leg's own return is what makes the two comparable.
+        mapped = [{**r, "body": r[key]} for r in rows if r.get(key) is not None]
+        surface = sensitivity_surface(mapped, prior_grid, gap_grid,
+                                      cost_bps=cost_pct * 100.0, min_n=min_n)
+        out[leg] = {"surface": surface, "verdict": surface_verdict(surface)}
+    return out
+
+
+def format_surface(sur: dict) -> list[str]:
+    if not sur:
+        return []
+    L = ["", "  3. Does the parameter plateau survive the constraint?", "",
+         f"     {'exit':14}{'cells':>7}{'positive':>10}{'worst':>10}{'spread':>9}"
+         f"{'plateau':>10}",
+         f"     {'-' * 60}"]
+    for leg, label in (("t0", f"{T0_EXIT} (T+0)"), ("t1", f"{T1_EXIT} (T+1)")):
+        v = (sur.get(leg) or {}).get("verdict") or {}
+        if not v.get("cells"):
+            L.append(f"     {label:14}{'—':>7}")
+            continue
+        sr = "n/a" if v.get("spread_ratio") is None else f"{v['spread_ratio']:.2f}"
+        L.append(f"     {label:14}{v['cells']:>7}{v['positive']:>6}/{v['cells']:<3}"
+                 f"{v['worst_net']:>+9.3f}%{sr:>9}"
+                 f"{('yes' if v['plateau'] else 'NO'):>10}")
+    L += ["",
+          "     A plateau must be broad and flat: a fitted boundary towers over",
+          "     its neighbours, a real effect survives moving the cut points. The",
+          "     grid is fixed around the validated thresholds and nothing is",
+          "     selected from it — re-fitting to the T+1 exit would be dredging",
+          "     the same ten years a second time."]
+    return L
+
+
+def format_report(curve: list[dict], be: dict, sett: dict,
+                  sur: dict | None = None) -> str:
     L = ["Execution realism — settlement and slippage", ""]
 
     # ── settlement ───────────────────────────────────────────────────────
@@ -195,6 +262,7 @@ def format_report(curve: list[dict], be: dict, sett: dict) -> str:
               "     Read the last line as the real execution budget. Shortfall scales",
               "     with volatility rather than with a fixed tick, so the share of the",
               "     daily move is what has to hold, not the basis points."]
+    L += format_surface(sur or {})
     L += ["", "  Nothing here is executed. No order is placed or recommended.",
           "  Not investment advice."]
     return "\n".join(L)
@@ -205,7 +273,7 @@ def main(argv: list[str]) -> int:
 
     rows = build_paths(start=config.LEARNING_TRAIN_START or None)
     print(format_report(slippage_curve(rows), breakeven(rows),
-                        settlement_comparison(rows)))
+                        settlement_comparison(rows), settlement_surface(rows)))
     return 0
 
 
