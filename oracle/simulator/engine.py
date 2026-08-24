@@ -214,10 +214,74 @@ def _summarize(st: PortfolioState, bars: dict, dates: list[str],
         "max_drawdown_pct": round(mdd * 100, 4),
         "exit_reasons": reasons,
         "sessions": len(dates),
+        # Carried so the report can price how many nights positions were held;
+        # the trade rows store dates, not indices, and mapping one to the other
+        # needs the session calendar.
+        "dates": list(dates),
         "equity_curve": st.equity_curve,
         "trades": [t.__dict__ for t in trades],
         "rules": rules.__dict__,
     }
+
+
+def overnight_exposure(trades: list, dates: list[str],
+                       drift_pct: float | None = None,
+                       round_trip_cost_pct: float = 0.15) -> dict:
+    """How much of the result is the cost of holding positions overnight. Pure.
+
+    Positions here are held for several sessions, and every night held is spent
+    in the segment that carries this market's negative drift: the overnight gap
+    averages -0.072% while the intraday body averages +0.110%. A multi-session
+    hold therefore starts each trade some distance in the hole, and that distance
+    is a property of the market rather than of the rules being tested.
+
+    The obvious response — flatten every night and re-enter each open — is
+    priced here too, and it loses. Avoiding one night saves 0.072% and costs a
+    0.15% round trip. That asymmetry is why the drag cannot simply be removed,
+    and why it belongs in the report as context rather than as a to-do.
+    """
+    if drift_pct is None:
+        from ..research.exit_horizon import MEASURED_OVERNIGHT_DRIFT_PCT
+        drift_pct = MEASURED_OVERNIGHT_DRIFT_PCT
+    index = {d: i for i, d in enumerate(dates)}
+    nights = []
+    for t in trades:
+        get = t.get if isinstance(t, dict) else lambda k: getattr(t, k, None)
+        a, b = get("entry_date"), get("exit_date")
+        if a in index and b in index:
+            nights.append(max(0, index[b] - index[a]))
+    if not nights:
+        return {"status": "no_trades"}
+    total = sum(nights)
+    mean_hold = total / len(nights)
+    saved, cost = abs(drift_pct), round_trip_cost_pct
+    return {
+        "status": "measured", "trades": len(nights), "nights": total,
+        "mean_hold_sessions": round(mean_hold, 2),
+        "drift_per_night_pct": drift_pct,
+        "drag_per_trade_pct": round(mean_hold * drift_pct, 4),
+        "cost_to_flatten_per_night_pct": round(cost - saved, 4),
+        "flattening_is_worth_it": bool(saved > cost),
+    }
+
+
+def format_overnight_exposure(e: dict) -> list[str]:
+    if e.get("status") != "measured":
+        return []
+    L = ["",
+         f"  overnight exposure: {e['mean_hold_sessions']} sessions held on average, "
+         f"{e['nights']} nights total",
+         f"    the overnight gap averages {e['drift_per_night_pct']:+.4f}% in this "
+         f"market, so each trade",
+         f"    carries about {e['drag_per_trade_pct']:+.3f}% of drag before the rules "
+         f"do anything."]
+    if e["flattening_is_worth_it"]:
+        L.append("    Flattening overnight would more than pay for itself here.")
+    else:
+        L += [f"    Flattening every night would cost "
+              f"{e['cost_to_flatten_per_night_pct']:+.4f}%/night more than it saves,",
+              "    so this is a structural headwind, not something the rules can fix."]
+    return L
 
 
 def format_report(s: dict) -> str:
@@ -257,6 +321,8 @@ def format_report(s: dict) -> str:
         "  close and prior China closes only, and filled at that session's open.",
         "  Still unmodeled: live fills, slippage beyond the fixed bps, taxes,",
         "  borrow costs, and regime change.",
+        *format_overnight_exposure(
+            overnight_exposure(s.get("trades") or [], s.get("dates") or [])),
         "",
         "  A simulated curve is a research result, not a promise — live fills, "
         "taxes and regime change are not modeled. Not investment advice.",

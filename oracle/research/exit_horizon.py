@@ -56,6 +56,14 @@ HORIZONS = ("close_d0", "open_d1", "close_d1", "close_d2")
 T0_EXIT = "close_d0"
 T1_EXIT = "open_d1"
 
+# Mean overnight (previous close -> open) return per session across the traded
+# universe, 2016-2026: t=-14.35, negative in 10/10 sectors and 11/11 years.
+# Published as a constant so anything reasoning about the cost of holding
+# overnight cites this measurement instead of re-deriving it — recomputing it
+# needs the whole bar history, which most callers have no reason to load.
+# Re-measure with drift_decomposition() if the universe or window changes.
+MEASURED_OVERNIGHT_DRIFT_PCT = -0.0722
+
 # What each horizon adds to the one before it, for the report.
 HORIZON_NOTE = {
     "close_d0": "same-session body (the validated exit)",
