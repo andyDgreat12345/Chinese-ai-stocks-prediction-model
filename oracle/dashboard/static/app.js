@@ -310,6 +310,12 @@ const PANELS = [
       "Not a search. No bucket here is ever selected to trade."),
   },
   {
+    id: "objective", title: "Learning Objective — scored vs tradeable", wide: true,
+    render: researchPanel("objective",
+      "The learner scores close-to-close; a trade earns the body. These are "
+      + "not the same number."),
+  },
+  {
     id: "segments", title: "K-line Segments — where the edge sits", wide: true,
     render: researchPanel("segments"),
   },

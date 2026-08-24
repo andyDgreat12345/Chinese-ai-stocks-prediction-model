@@ -15,7 +15,8 @@ APP_JS = Path(__file__).resolve().parents[1] / "oracle/dashboard/static/app.js"
 
 # Endpoints whose whole purpose is to be read by a person. A data endpoint may
 # legitimately exist without a panel; these may not.
-MUST_RENDER = ("paper", "segments", "execution", "exit-horizon", "regimes")
+MUST_RENDER = ("paper", "segments", "execution", "exit-horizon", "regimes",
+               "objective")
 
 
 def _panel_ids() -> set[str]:

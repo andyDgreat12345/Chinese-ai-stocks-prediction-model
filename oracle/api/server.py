@@ -527,6 +527,26 @@ def exit_horizon() -> dict:
         return {"disclaimer": config.DISCLAIMER, "error": str(e)}
 
 
+@app.get("/api/objective")
+def learning_objective() -> dict:
+    """Whether the learner's scored target is the one a trade can earn.
+
+    The loop scores against close-to-close; a position entered at the open earns
+    only the body. This reports each signal's edge against both, which is how
+    the system's founding signal turns out to carry t=+5.8 on the scored
+    objective and t=+0.1 on the tradeable one.
+
+    Fail-soft: a research endpoint must never take the dashboard down."""
+    from ..learning import objective as ob
+
+    try:
+        edges, a = ob.measure()
+        return {"disclaimer": config.DISCLAIMER, "edges": edges,
+                "alignment": a, "report": ob.format_report(edges, a)}
+    except Exception as e:  # noqa: BLE001
+        return {"disclaimer": config.DISCLAIMER, "error": str(e)}
+
+
 @app.get("/api/regimes")
 def regimes() -> dict:
     """Whether the edge is broad or lives in one corner of the data.

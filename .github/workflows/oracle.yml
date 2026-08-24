@@ -184,7 +184,11 @@ jobs:
               # Is the edge broad, or one lucky corner of the data?
               python -m oracle.research.regimes > regimes.md || true
               cat regimes.md || true
-              cp regimes.md _state/regimes.md || true ;;
+              cp regimes.md _state/regimes.md || true
+              # Is the learner optimizing a target a trade can actually earn?
+              python -m oracle.learning.objective > objective.md || true
+              cat objective.md || true
+              cp objective.md _state/objective.md || true ;;
             *)                           # morning / afternoon / all daily jobs
               python -m oracle.run "$phase" ;;
           esac

@@ -262,6 +262,15 @@ def format_learning_report(history: list[dict], params: dict,
     if records:
         lines += format_coverage(records)
     lines += ["",
+              "WHAT THESE HIT RATES ARE, AND ARE NOT.",
+              "Every number above is scored against close-to-close, which is the",
+              "overnight gap plus the session body added together. A position",
+              "entered at the open earns only the body. The model calls the gap",
+              "well (71.8%) and the body barely at all (49.4%), so a scored hit",
+              "rate is NOT the accuracy of anything a trade could have captured,",
+              "and the two must never be quoted interchangeably.",
+              "Run `python -m oracle.learning.objective` for the per-signal split.",
+              "",
               "A change is adopted only when it beats the incumbent on a holdout "
               "window the search never saw — most runs correctly refuse. "
               "Not investment advice."]

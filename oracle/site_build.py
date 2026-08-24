@@ -39,6 +39,7 @@ ENDPOINTS = {
     "execution": server.execution_realism,
     "exit-horizon": server.exit_horizon,
     "regimes": server.regimes,
+    "objective": server.learning_objective,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,
