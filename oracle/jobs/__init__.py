@@ -88,8 +88,13 @@ def reflect_and_update() -> None:
     # Forward paper record for the validated mean-reversion rule. Records one
     # session only, so the ledger can never be backfilled into looking like
     # evidence it is not. Places no orders.
-    from ..paper import record as _paper
+    from ..paper import record as _paper, settle_pending as _settle
     _paper()
+    # The T+1 leg exits at the NEXT open, so it cannot settle on the day the
+    # setup fires. This closes out earlier sessions whose next open has arrived.
+    # Updates existing rows only — it never inserts, so it cannot become a
+    # backfill.
+    _settle()
 
 
 def autotune() -> None:

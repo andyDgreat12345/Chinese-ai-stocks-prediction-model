@@ -75,6 +75,12 @@ def init_db(db_path: Path | str | None = None) -> None:
         # Migrations for restored older state DBs:
         _add_column_if_missing(conn, "llm_calls", "top_pick", "TEXT")  # JSON single-name pick
         _migrate_llm_calls_variant(conn)
+        # The T+1 leg of the paper ledger, added after the settlement question
+        # surfaced. Existing rows keep their T+0 result and settle the new leg
+        # on the next run that can see the following open.
+        for col, decl in (("exit_price_t1", "REAL"), ("net_pct_t1", "REAL"),
+                          ("outcome_t1", "TEXT")):
+            _add_column_if_missing(conn, "paper_trades", col, decl)
         for tbl in ("us_close", "china_close"):        # OHLC for candlesticks
             for col in ("open", "high", "low"):
                 _add_column_if_missing(conn, tbl, col, "REAL")

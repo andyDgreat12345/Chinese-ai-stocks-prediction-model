@@ -455,6 +455,7 @@ def paper_strategy() -> dict:
     db.init_db()
     try:
         s = paper.summary()
+        s_t1 = paper.summary(leg="t1")
         return {
             "disclaimer": config.DISCLAIMER,
             "strategy": paper.STRATEGY,
@@ -462,8 +463,9 @@ def paper_strategy() -> dict:
                      "gap_max": paper.GAP_MAX,
                      "cost_pct": paper.COST_PCT},
             "holdout_reference": paper.HOLDOUT_REFERENCE,
-            "forward": s,
-            "report": paper.format_report(s),
+            "holdout_reference_t1": paper.HOLDOUT_REFERENCE_T1,
+            "forward": s, "forward_t1": s_t1,
+            "report": paper.format_report(s, s_t1),
         }
     except Exception as e:  # noqa: BLE001
         return {"disclaimer": config.DISCLAIMER, "error": str(e), "forward": {"n": 0}}

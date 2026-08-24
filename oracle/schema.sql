@@ -288,6 +288,16 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     body_pct      REAL,                   -- open -> close, the segment traded
     net_pct       REAL,                   -- body minus modelled round-trip cost
     outcome       TEXT,                   -- win / loss / open
+    -- The same trade under T+1 settlement. Mainland equities cannot be sold
+    -- on the session they were bought, so if that applies to these ETFs the
+    -- same-session exit above is not placeable and THIS is the real result.
+    -- Both legs are recorded because the forward record takes months to fill
+    -- and the settlement question is still open: discovering at the end that
+    -- only the unexecutable leg was kept would waste the entire wait.
+    -- Settles one session later than the T+0 leg, when the next open exists.
+    exit_price_t1 REAL,
+    net_pct_t1    REAL,                   -- open -> NEXT open, minus costs
+    outcome_t1    TEXT,                   -- win / loss / open
     recorded_at   TEXT NOT NULL,
     settled_at    TEXT,
     UNIQUE (trade_date, sector, strategy)

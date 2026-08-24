@@ -118,3 +118,107 @@ def test_open_trades_are_excluded_from_the_summary():
                  (paper.STRATEGY,))
     conn.commit()
     assert paper.summary(tmp)["n"] == 0
+
+
+# ── T+1 settlement leg ────────────────────────────────────────────────────
+# The ledger records both legs because the settlement question is unresolved.
+# The forward record takes months to fill, so keeping only the same-session leg
+# risks discovering at the end that the wait recorded an unexecutable number.
+
+def _seed_setup(db_path, dates, prices):
+    """Write bars that make the rule fire on dates[1]."""
+    from oracle import db as _db
+    _db.init_db(db_path)
+    rows = [{"trade_date": d, "symbol": "510300", "sector": "broad",
+             "close": c, "open": o, "high": max(o, c), "low": min(o, c),
+             "pct_change": 0.0, "fetched_at": "x"}
+            for d, (o, c) in zip(dates, prices)]
+    _db.upsert_market_close("china_close", rows, db_path=db_path)
+
+
+def test_t1_leg_settles_at_the_next_open_not_the_close(tmp_path):
+    p = str(tmp_path / "t.db")
+    # day0 body -2% (qualifies as prior), day1 gaps -1% then rises,
+    # day2 opens lower than day1's open.
+    _seed_setup(p, ["2026-01-05", "2026-01-06", "2026-01-07"],
+                [(100.0, 98.0), (97.02, 99.0), (96.0, 96.0)])
+    from oracle import paper
+    rows = paper.scan("2026-01-06", db_path=p)
+    assert len(rows) == 1
+    r = rows[0]
+    # T+0 exits at 99.0 from 97.02; T+1 exits at the next open, 96.0
+    assert r["body_pct"] > 0 and r["outcome"] == "win"
+    assert r["exit_price_t1"] == 96.0
+    assert r["net_pct_t1"] < 0 and r["outcome_t1"] == "loss"
+
+
+def test_t1_leg_stays_open_until_the_next_session_exists(tmp_path):
+    p = str(tmp_path / "t.db")
+    _seed_setup(p, ["2026-02-05", "2026-02-06"],
+                [(100.0, 98.0), (97.02, 99.0)])
+    from oracle import paper
+    r = paper.scan("2026-02-06", db_path=p)[0]
+    assert r["outcome"] == "win"          # same-session leg is settled
+    assert r["outcome_t1"] == "open"      # next open does not exist yet
+    assert r["net_pct_t1"] is None
+
+
+def test_settle_pending_never_inserts_rows(tmp_path):
+    """The load-bearing restriction: settling must not become a backfill.
+
+    The forward ledger's value is that entries were written before outcomes
+    were known. A settle pass that could insert would quietly recreate the
+    backfill bug this module was already rewritten once to remove.
+    """
+    from oracle import db as _db, paper
+    p = str(tmp_path / "t.db")
+    _seed_setup(p, ["2026-03-04", "2026-03-05", "2026-03-06"],
+                [(100.0, 98.0), (97.02, 99.0), (96.0, 96.0)])
+    # No rows recorded at all — settling must find nothing to do and add nothing.
+    assert paper.settle_pending(db_path=p) == 0
+    conn = _db.connect(p)
+    try:
+        n = conn.execute("SELECT COUNT(*) c FROM paper_trades").fetchone()["c"]
+    finally:
+        conn.close()
+    assert n == 0
+
+
+def test_settle_pending_closes_a_leg_recorded_earlier(tmp_path):
+    from oracle import db as _db, paper
+    p = str(tmp_path / "t.db")
+    # Record on a day when the next open does not exist yet.
+    _seed_setup(p, ["2026-04-06", "2026-04-07"],
+                [(100.0, 98.0), (97.02, 99.0)])
+    assert paper.record("2026-04-07", db_path=p) == 1
+    assert paper.summary(db_path=p, leg="t1")["n"] == 0
+    # The next session arrives; the leg settles without a new row appearing.
+    _seed_setup(p, ["2026-04-08"], [(96.0, 96.0)])
+    assert paper.settle_pending(db_path=p) == 1
+    conn = _db.connect(p)
+    try:
+        n = conn.execute("SELECT COUNT(*) c FROM paper_trades").fetchone()["c"]
+    finally:
+        conn.close()
+    assert n == 1                                   # updated, not inserted
+    assert paper.summary(db_path=p, leg="t1")["n"] == 1
+
+
+def test_summary_legs_are_independent(tmp_path):
+    from oracle import paper
+    p = str(tmp_path / "t.db")
+    _seed_setup(p, ["2026-05-06", "2026-05-07", "2026-05-08"],
+                [(100.0, 98.0), (97.02, 99.0), (96.0, 96.0)])
+    paper.record("2026-05-07", db_path=p)
+    t0 = paper.summary(db_path=p)
+    t1 = paper.summary(db_path=p, leg="t1")
+    assert t0["leg"] == "t0" and t1["leg"] == "t1"
+    assert t0["mean_net_pct"] > 0 > t1["mean_net_pct"]
+
+
+def test_report_shows_both_legs_and_the_settlement_caveat():
+    from oracle import paper
+    text = paper.format_report({"n": 0}, {"n": 0})
+    assert "T+0" in text and "T+1" in text
+    assert "settlement question is unresolved" in text
+    assert "Not investment advice" in text
