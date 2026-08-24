@@ -144,6 +144,10 @@ def build_paths(db_path=None, start: str | None = None) -> list[dict]:
     ``prior_body`` and ``gap`` are both complete at the open, so selecting on
     them involves no lookahead. The returns are what happens afterwards.
     """
+    # A fresh clone has no database file at all, and the research phase runs
+    # before any ingestion has happened on a first run. Creating the schema
+    # here turns that into an empty result instead of "no such table".
+    db.init_db(db_path)
     rows = []
     for sector, symbol in config.CHINA_SECTOR_ETFS.items():
         bars = _bars(symbol, db_path)

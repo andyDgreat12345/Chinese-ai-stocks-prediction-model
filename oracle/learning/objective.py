@@ -201,10 +201,12 @@ def format_report(edges: list[dict], a: dict) -> str:
 
 def measure(db_path=None, start: str | None = None) -> tuple[list[dict], dict]:
     """Build both edge columns from stored history. Network-free."""
-    from .. import config
+    from .. import config, db
     from ..analysis.segments import build_segments
     from ..backtest import collect_records
 
+    # See build_paths: the research phase can run before any ingestion has.
+    db.init_db(db_path)
     start = start or config.LEARNING_TRAIN_START or None
     recs = collect_records(start=start, db_path=db_path)
     segs = build_segments(db_path=db_path, start=start)
