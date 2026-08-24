@@ -100,7 +100,10 @@ several of them overturned an earlier, more flattering number.
 | So the tradeable segment is a coin flip | body edge_t = −0.53 |
 | But the gap is the **losing** half of the day | gap −0.072%/session (t=−14.4) vs body +0.110% (t=+10.2) |
 | ...so entering at the open avoids a drag, not a gain | negative overnight in 10/10 sectors, 11/11 years |
-| Simulator returns come from **exit discipline** | 49% win rate, 1.6:1 win/loss ratio |
+| The learner optimizes a target **no trade can earn** | scores close-to-close; a trade earns the body |
+| ...so its dominant signal is empty where it counts | `us_spillover` t=+5.82 scored, **t=+0.09** tradeable |
+| ...and the two objectives disagree on the best signal | rho=0.72; `rsi_signal` wins on the body |
+| Simulator returns come from **exit discipline** | 49% win rate, 1.6:1 win/loss ratio — the prediction has no tradeable content to add |
 | A conditional **mean-reversion** rule does survive | holdout n=332, 59.6% hit, +0.312% net, t=+2.40 |
 | Holding it overnight makes it **worse** | +0.304% at t=+2.22, wider spread; 2-day hold fails FDR |
 | The rule is a filter on **magnitude**, not direction | fires on 5.2% of sessions, selects 3.46× normal intraday drift |
@@ -452,6 +455,14 @@ settlement question, and how much slippage the edge absorbs before it is gone
 trades). The settlement warning prints unconditionally — a caveat that only
 appears when the numbers happen to compute would be missing on exactly the run
 where someone reads the report and funds something.
+
+`learning/objective.py` asks whether the learner is optimizing something a trade
+can earn. It is not: the loop scores close-to-close, a position entered at the
+open earns the body, and the system's founding signal carries t=+5.82 against
+the first and t=+0.09 against the second. The module deliberately stops short of
+proposing a reweight — no signal reaches t≥2 on the body, so realigning the
+objective would most likely reveal that the tradeable segment is unpredictable
+rather than produce a better model. What changes is how the headline is read.
 
 `research/regimes.py` asks whether the edge is broad or one lucky corner,
 slicing the rule across six pre-registered families. It is deliberately **not**
