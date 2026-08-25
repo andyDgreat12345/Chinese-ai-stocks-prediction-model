@@ -103,3 +103,62 @@ def test_backtest_report_embeds_cost_aware_section(monkeypatch):
     report = bt.run_backtest(db_path=tmp)
     assert "cost_aware" in report and "error" not in report["cost_aware"]
     assert "cost-aware paper trading" in bt.format_report(report)
+
+
+# ── overnight exposure ────────────────────────────────────────────────────
+# Positions here are held for several sessions, and every night held sits in
+# the segment carrying this market's negative drift. The report prices that.
+
+def test_overnight_exposure_counts_nights_between_entry_and_exit():
+    from oracle.simulator.engine import overnight_exposure
+
+    dates = [f"2026-01-{i:02d}" for i in range(1, 11)]
+    trades = [{"entry_date": "2026-01-01", "exit_date": "2026-01-04"},   # 3
+              {"entry_date": "2026-01-02", "exit_date": "2026-01-03"}]   # 1
+    e = overnight_exposure(trades, dates, drift_pct=-0.10)
+    assert e["nights"] == 4
+    assert e["mean_hold_sessions"] == 2.0
+    assert e["drag_per_trade_pct"] == -0.20
+
+
+def test_a_same_session_trade_carries_no_overnight_drag():
+    from oracle.simulator.engine import overnight_exposure
+
+    dates = ["2026-02-02", "2026-02-03"]
+    e = overnight_exposure([{"entry_date": "2026-02-02",
+                             "exit_date": "2026-02-02"}], dates,
+                           drift_pct=-0.10)
+    assert e["nights"] == 0
+    assert e["drag_per_trade_pct"] == 0.0
+
+
+def test_flattening_is_only_worth_it_when_the_drift_exceeds_the_round_trip():
+    """The asymmetry is why the drag cannot simply be removed."""
+    from oracle.simulator.engine import overnight_exposure
+
+    dates = ["2026-03-02", "2026-03-03"]
+    trades = [{"entry_date": "2026-03-02", "exit_date": "2026-03-03"}]
+    cheap = overnight_exposure(trades, dates, drift_pct=-0.30,
+                               round_trip_cost_pct=0.15)
+    dear = overnight_exposure(trades, dates, drift_pct=-0.07,
+                              round_trip_cost_pct=0.15)
+    assert cheap["flattening_is_worth_it"] is True
+    assert dear["flattening_is_worth_it"] is False
+
+
+def test_overnight_exposure_uses_the_measured_constant_by_default():
+    from oracle.research.exit_horizon import MEASURED_OVERNIGHT_DRIFT_PCT
+    from oracle.simulator.engine import overnight_exposure
+
+    dates = ["2026-04-02", "2026-04-03"]
+    e = overnight_exposure([{"entry_date": "2026-04-02",
+                             "exit_date": "2026-04-03"}], dates)
+    assert e["drift_per_night_pct"] == MEASURED_OVERNIGHT_DRIFT_PCT
+    assert MEASURED_OVERNIGHT_DRIFT_PCT < 0
+
+
+def test_overnight_exposure_degrades_without_trades():
+    from oracle.simulator.engine import format_overnight_exposure, overnight_exposure
+
+    assert overnight_exposure([], [])["status"] == "no_trades"
+    assert format_overnight_exposure({"status": "no_trades"}) == []

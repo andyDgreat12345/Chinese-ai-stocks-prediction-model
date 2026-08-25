@@ -225,22 +225,44 @@ Guards that exist because something got past them once:
 | `implausible_moves` + per-board limits | unadjusted share conversions read as −74% market moves |
 | bar-date stamping | Saturday "sessions" invented by the fetch clock |
 | `TRADEABLE_FROM_OPEN` | a 71% hit rate on a segment no entry can capture |
+| per-family sign test | a pooled test reporting p<0.0001 where the honest figure was p=0.055 |
+| majority-baseline check | testing a 71.8% hit rate against 50% when the base rate was 58.8% |
+| unconditional settlement warning | a T+1 caveat that vanished whenever there were no trades to price |
+| `settle_pending` insert ban | a settle pass that could have rebuilt the backfill bug it replaced |
 
 The pattern worth knowing when extending this: **a component that fails soft
 fails silently.** Every one of the data bugs above sat behind a job that reported
 success. When adding a source, add the check that proves it produced something —
 item count and freshness, never HTTP status.
 
+The statistical analogue, learned the same way: **a test is only as valid as its
+null.** Two of the guards above exist because a number was compared against the
+wrong baseline — a hit rate against 50% when the base rate was 58.8%, and a sign
+test against independence when the buckets shared every trade. Both produced
+impressive figures that meant nothing. When adding a measurement, write down what
+it would look like under no effect before reading what it says.
+
 ## 10. Status & remaining work
 
 **The spine is complete and running.** Ingest → predict → refresh → score →
-measure → learn → reflect → display, on GitHub Actions, with 418 tests in CI.
+measure → learn → reflect → display, on GitHub Actions, with 467 tests in CI.
 
 Remaining items, honestly stated:
 
 - **The tradeable edge is unproven.** 52% bet-accuracy is significant but sits
-  in the overnight gap; the segment actually traded is 49.3%. The mean-reversion
+  in the overnight gap; the segment actually traded is 49.4%. The mean-reversion
   rule is the strongest candidate and needs forward evidence (`oracle/paper.py`).
+- **Settlement is the largest single risk, and it is not statistical.** Every
+  instrument is a domestic A-share equity ETF; mainland equities settle T+1. If
+  that applies here, the validated rule's same-session exit cannot be placed.
+  `research/execution.py` prices it both ways (−0.014%/trade) and the ledger
+  records both legs, but only a broker can answer it.
+- **Where the return actually accrues is now measured.** The overnight window is
+  a persistent drag (−0.072%/session, t=−14.4) and the intraday session carries
+  everything (+0.110%, t=+10.2), in 10/10 sectors and 11/11 years — the inverse
+  of the US pattern, plausibly T+1 forcing exits to the open. The premium is
+  below round-trip cost, which is why it survives unarbitraged, and the rule's
+  function is to find the 5% of sessions where it runs 3.46× normal.
 - **The Chinese news layer is measured but not wired.** It enters the learner
   automatically once coverage clears 5%.
 - **The debate analyst is off** pending its head-to-head verdict.

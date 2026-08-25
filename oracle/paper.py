@@ -115,12 +115,26 @@ def scan(trade_date: str | None = None, db_path=None) -> list[dict]:
             if not qualifies(prev_seg.body, seg.gap):
                 continue
             net, outcome = evaluate(seg.body)
+            # The same trade under T+1: sold at the NEXT session's open, which
+            # does not exist yet on the day the setup fires. It stays 'open'
+            # until a later run can see it.
+            nxt = bars[i + 1] if i + 1 < len(bars) else None
+            t1_exit = nxt.get("open") if nxt else None
+            entry = row.get("open")
+            t1_pct = None
+            if t1_exit is not None and entry:
+                t1_pct = round((float(t1_exit) / float(entry) - 1.0) * 100.0, 4)
+                if abs(t1_pct) > limit:      # a conversion is not a return
+                    t1_pct, t1_exit = None, None
+            net_t1, outcome_t1 = evaluate(t1_pct)
             out.append({
                 "trade_date": row["trade_date"], "sector": sector,
                 "strategy": STRATEGY,
                 "prior_body": prev_seg.body, "gap": seg.gap,
-                "entry_price": row.get("open"), "exit_price": row.get("close"),
+                "entry_price": entry, "exit_price": row.get("close"),
                 "body_pct": seg.body, "net_pct": net, "outcome": outcome,
+                "exit_price_t1": t1_exit, "net_pct_t1": net_t1,
+                "outcome_t1": outcome_t1,
             })
     return out
 
@@ -153,17 +167,22 @@ def record(trade_date: str | None = None, db_path=None) -> int:
                     """INSERT INTO paper_trades
                            (trade_date, sector, strategy, prior_body, gap,
                             entry_price, exit_price, body_pct, net_pct, outcome,
+                            exit_price_t1, net_pct_t1, outcome_t1,
                             recorded_at, settled_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(trade_date, sector, strategy) DO UPDATE SET
                             exit_price=excluded.exit_price,
                             body_pct=excluded.body_pct,
                             net_pct=excluded.net_pct,
                             outcome=excluded.outcome,
+                            exit_price_t1=excluded.exit_price_t1,
+                            net_pct_t1=excluded.net_pct_t1,
+                            outcome_t1=excluded.outcome_t1,
                             settled_at=excluded.settled_at""",
                     (r["trade_date"], r["sector"], r["strategy"], r["prior_body"],
                      r["gap"], r["entry_price"], r["exit_price"], r["body_pct"],
-                     r["net_pct"], r["outcome"], now,
+                     r["net_pct"], r["outcome"], r["exit_price_t1"],
+                     r["net_pct_t1"], r["outcome_t1"], now,
                      None if r["outcome"] == "open" else now))
             conn.commit()
         finally:
@@ -175,16 +194,79 @@ def record(trade_date: str | None = None, db_path=None) -> int:
         return 0
 
 
-def summary(db_path=None, since: str | None = None) -> dict:
-    """Aggregate the settled forward record."""
+def settle_pending(db_path=None, lookback: int = 10) -> int:
+    """Fill in T+1 legs that could not settle on the day they were recorded.
+
+    A T+1 exit happens at the *next* session's open, which does not exist when
+    the setup fires. This revisits recently recorded rows and settles the ones
+    whose next open has since arrived.
+
+    It **only ever updates rows that already exist**, and that restriction is
+    load-bearing. The forward ledger's whole value is that entries were written
+    before their outcomes were known; a settle pass that could also insert would
+    be a backfill in disguise, which is the exact failure this module was
+    rewritten once already to prevent. Rows are never created here.
+
+    Never raises — a settling pass must not break the daily pipeline.
+    """
+    try:
+        db.init_db(db_path)
+        conn = db.connect(db_path)
+        try:
+            pending = [r["trade_date"] for r in conn.execute(
+                """SELECT DISTINCT trade_date FROM paper_trades
+                   WHERE strategy = ? AND (outcome_t1 IS NULL OR outcome_t1 = 'open')
+                   ORDER BY trade_date DESC LIMIT ?""", (STRATEGY, lookback))]
+        finally:
+            conn.close()
+        if not pending:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        settled = 0
+        conn = db.connect(db_path)
+        try:
+            for d in pending:
+                for r in scan(d, db_path):
+                    if r["outcome_t1"] == "open":
+                        continue
+                    cur = conn.execute(
+                        """UPDATE paper_trades
+                              SET exit_price_t1 = ?, net_pct_t1 = ?,
+                                  outcome_t1 = ?, settled_at = COALESCE(settled_at, ?)
+                            WHERE trade_date = ? AND sector = ? AND strategy = ?""",
+                        (r["exit_price_t1"], r["net_pct_t1"], r["outcome_t1"],
+                         now, r["trade_date"], r["sector"], r["strategy"]))
+                    settled += cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if settled:
+            print(f"paper.settle_pending: settled {settled} T+1 leg(s)")
+        return settled
+    except Exception as e:  # noqa: BLE001 — research must never break the pipeline
+        print(f"paper.settle_pending FAILED: {e!r}")
+        return 0
+
+
+def summary(db_path=None, since: str | None = None,
+            leg: str = "t0") -> dict:
+    """Aggregate the settled forward record for one settlement leg.
+
+    ``leg='t0'`` is the same-session exit the rule was validated on;
+    ``leg='t1'`` is the same trade sold at the next open, which is what the rule
+    becomes if these ETFs settle T+1.
+    """
     from math import sqrt
     from statistics import pstdev
 
     db.init_db(db_path)
     conn = db.connect(db_path)
     try:
-        q = ("SELECT trade_date, sector, net_pct, outcome FROM paper_trades "
-             "WHERE strategy = ? AND outcome != 'open'")
+        col = "net_pct_t1" if leg == "t1" else "net_pct"
+        oc = "outcome_t1" if leg == "t1" else "outcome"
+        q = (f"SELECT trade_date, sector, {col} AS net_pct, {oc} AS outcome "
+             f"FROM paper_trades "
+             f"WHERE strategy = ? AND {oc} IS NOT NULL AND {oc} != 'open'")
         args = [STRATEGY]
         if since:
             q += " AND trade_date >= ?"
@@ -195,12 +277,12 @@ def summary(db_path=None, since: str | None = None) -> dict:
 
     nets = [r["net_pct"] for r in rows if r["net_pct"] is not None]
     if not nets:
-        return {"n": 0, "since": since}
+        return {"n": 0, "since": since, "leg": leg}
     mean = sum(nets) / len(nets)
     sd = pstdev(nets)
     wins = sum(1 for n in nets if n > 0)
     return {
-        "n": len(nets),
+        "n": len(nets), "leg": leg,
         "since": rows[0]["trade_date"],
         "through": rows[-1]["trade_date"],
         "hit_rate": round(wins / len(nets), 4),
@@ -216,32 +298,55 @@ def summary(db_path=None, since: str | None = None) -> dict:
 # rather than letting the forward number be read on its own.
 HOLDOUT_REFERENCE = {"n": 332, "hit_rate": 0.596, "mean_net_pct": 0.312, "t": 2.40}
 
+# The same rule on the same holdout, sold at the next open instead — what it
+# becomes if these ETFs settle T+1 and the same-session exit is not placeable.
+# Measured in oracle.research.execution.
+HOLDOUT_REFERENCE_T1 = {"n": 330, "hit_rate": 0.539, "mean_net_pct": 0.304, "t": 2.22}
 
-def format_report(s: dict) -> str:
-    L = [f"Paper strategy — {STRATEGY}", "",
-         f"  rule: enter at the open when prior body <= {PRIOR_BODY_MAX}% "
-         f"AND gap <= {GAP_MAX}%; exit at the close",
-         f"  costs: {COST_PCT}% round trip", ""]
-    ref = HOLDOUT_REFERENCE
-    L.append(f"  {'record':22}{'n':>7}{'hit':>9}{'net':>11}{'t':>8}")
-    L.append(f"  {'-' * 57}")
-    L.append(f"  {'retrospective holdout':22}{ref['n']:>7}{ref['hit_rate']:>8.1%}"
-             f"{ref['mean_net_pct']:>+10.3f}%{ref['t']:>+8.2f}")
+
+def _leg_rows(label: str, ref: dict, s: dict) -> list[str]:
+    """Retrospective and forward rows for one settlement leg."""
+    L = [f"  {label}",
+         f"  {'record':22}{'n':>7}{'hit':>9}{'net':>11}{'t':>8}",
+         f"  {'-' * 57}",
+         f"  {'retrospective holdout':22}{ref['n']:>7}{ref['hit_rate']:>8.1%}"
+         f"{ref['mean_net_pct']:>+10.3f}%{ref['t']:>+8.2f}"]
     if not s.get("n"):
         L.append(f"  {'forward (live)':22}{0:>7}{'—':>9}{'—':>11}{'—':>8}")
-        L += ["",
-              "  No settled forward trades yet. The setup fires on about 5% of",
-              "  sessions, so across ten sectors expect roughly one every other day.",
-              "  Nothing here is evidence until this row fills."]
     else:
         t = "n/a" if s["t"] is None else f"{s['t']:+.2f}"
         L.append(f"  {'forward (live)':22}{s['n']:>7}{s['hit_rate']:>8.1%}"
                  f"{s['mean_net_pct']:>+10.3f}%{t:>8}")
-        L += ["", f"  forward window: {s['since']} → {s['through']}   "
-                  f"best {s['best']:+.2f}%  worst {s['worst']:+.2f}%"]
+        L.append(f"  window {s['since']} → {s['through']}   "
+                 f"best {s['best']:+.2f}%  worst {s['worst']:+.2f}%")
         if s["n"] < 60:
-            L.append(f"  Still thin — {60 - s['n']} more settled trade(s) before the "
-                     "forward number carries weight.")
+            L.append(f"  Still thin — {60 - s['n']} more settled trade(s) before this "
+                     "row carries weight.")
+    return L
+
+
+def format_report(s: dict, s_t1: dict | None = None) -> str:
+    L = [f"Paper strategy — {STRATEGY}", "",
+         f"  rule: enter at the open when prior body <= {PRIOR_BODY_MAX}% "
+         f"AND gap <= {GAP_MAX}%",
+         f"  costs: {COST_PCT}% round trip", ""]
+    L += _leg_rows("T+0 — exit at the same session's close (as validated)",
+                   HOLDOUT_REFERENCE, s)
+    L += [""]
+    L += _leg_rows("T+1 — sold at the next open (if same-session selling is barred)",
+                   HOLDOUT_REFERENCE_T1, s_t1 or {"n": 0})
+    L += ["",
+          "  Both legs are recorded because the settlement question is unresolved.",
+          "  Mainland equities cannot be sold on the session they were bought; if",
+          "  that applies to these ETFs, the T+0 rule is not placeable and the T+1",
+          "  row is the real one. Keeping only T+0 would mean discovering months",
+          "  from now that the wait had recorded the wrong number.",
+          "  The T+1 leg settles a session later than T+0, so it always lags."]
+    if not s.get("n"):
+        L += ["",
+              "  No settled forward trades yet. The setup fires on about 5% of",
+              "  sessions, so across ten sectors expect roughly one every other day.",
+              "  Nothing here is evidence until these rows fill."]
     L += ["",
           "  Every retrospective test reuses the same ten years. This row is the",
           "  only evidence that could not have been fitted, which is why it is the",
@@ -254,7 +359,8 @@ def format_report(s: dict) -> str:
 
 def main(argv: list[str]) -> int:
     record()
-    print(format_report(summary()))
+    settle_pending()
+    print(format_report(summary(), summary(leg="t1")))
     return 0
 
 

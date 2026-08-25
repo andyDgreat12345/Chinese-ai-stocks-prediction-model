@@ -95,16 +95,35 @@ several of them overturned an earlier, more flattering number.
 | Finding | Evidence |
 | --- | --- |
 | The model has a small real directional edge | 52% bet-accuracy over 8,251 bets, p = 1.1e-05 |
-| ...but it lives in the overnight **gap** | gap 71.1% vs body 49.3% |
+| ...but it lives in the overnight **gap** | gap 71.8% vs 58.8% majority baseline; body 49.4% |
 | ...which entry at the open **cannot capture** | the driving US session trades inside the gap window |
-| So the tradeable segment is a coin flip | body edge_t = −0.61 |
-| Simulator returns come from **exit discipline** | 49% win rate, 1.6:1 win/loss ratio |
+| So the tradeable segment is a coin flip | body edge_t = −0.53 |
+| But the gap is the **losing** half of the day | gap −0.072%/session (t=−14.4) vs body +0.110% (t=+10.2) |
+| ...so entering at the open avoids a drag, not a gain | negative overnight in 10/10 sectors, 11/11 years |
+| The learner optimizes a target **no trade can earn** | scores close-to-close; a trade earns the body |
+| ...so its dominant signal is empty where it counts | `us_spillover` t=+5.82 scored, **t=+0.09** tradeable |
+| ...and the two objectives disagree on the best signal | rho=0.72; `rsi_signal` wins on the body |
+| Simulator returns come from **exit discipline** | 49% win rate, 1.6:1 win/loss ratio — the prediction has no tradeable content to add |
 | A conditional **mean-reversion** rule does survive | holdout n=332, 59.6% hit, +0.312% net, t=+2.40 |
+| Holding it overnight makes it **worse** | +0.304% at t=+2.22, wider spread; 2-day hold fails FDR |
+| The rule is a filter on **magnitude**, not direction | fires on 5.2% of sessions, selects 3.46× normal intraday drift |
+| The premium is **not** harvestable unconditionally | +0.110% gross vs 0.15% round trip → −0.040% net |
+| The edge is broad but not decisively so | positive in 28/32 buckets; best family p = 0.055 |
 | Sector-edge ranking does **not** work | worse than random ordering (25th percentile) |
 
 Three lookahead bugs, two data-integrity bugs (unadjusted corporate actions,
-fetch-clock date stamping) and one ordering artifact were found and fixed along
-the way. Each is documented in the module that fixes it.
+fetch-clock date stamping), one ordering artifact and one invalid sign test
+(pooled across overlapping families, reporting p<0.0001 where the honest figure
+was p=0.055) were found and fixed along the way. Each is documented in the
+module that fixes it.
+
+**The largest open risk is not statistical.** Every instrument traded is a
+domestic A-share equity ETF, and mainland equities settle T+1 — shares bought
+today cannot be sold until the next session. If that applies to these ETFs, the
+validated rule's same-session exit cannot be placed at all. It is priced both
+ways in `research/execution.py` (the constraint costs −0.014%/trade, so the rule
+degrades rather than dies) and the forward ledger records both legs, but the
+question itself can only be settled by a broker.
 
 ## Quick start
 
@@ -422,6 +441,36 @@ effect the current history could resolve. It is what showed that a wide sweep
 would need roughly five years to detect a realistic news-sentiment effect, which
 killed a plan before it consumed months.
 
+`research/exit_horizon.py` asks whether the rule's same-session exit is the
+right one — it was never a decision, just the horizon the rule was found on.
+Four exits are scored on the same holdout, each against the drift of holding
+every session that long. It also carries the overnight/intraday decomposition
+that explains the answer, and the premium economics showing why a decade-long
+anomaly has not been arbitraged away (the premium is smaller than the friction
+needed to collect it).
+
+`research/execution.py` asks whether the rule can be executed at all: the T+1
+settlement question, and how much slippage the edge absorbs before it is gone
+(breakeven +0.230%, which is 8.8% of the average move on the sessions it
+trades). The settlement warning prints unconditionally — a caveat that only
+appears when the numbers happen to compute would be missing on exactly the run
+where someone reads the report and funds something.
+
+`learning/objective.py` asks whether the learner is optimizing something a trade
+can earn. It is not: the loop scores close-to-close, a position entered at the
+open earns the body, and the system's founding signal carries t=+5.82 against
+the first and t=+0.09 against the second. The module deliberately stops short of
+proposing a reweight — no signal reaches t≥2 on the body, so realigning the
+objective would most likely reveal that the tradeable segment is unpredictable
+rather than produce a better model. What changes is how the headline is read.
+
+`research/regimes.py` asks whether the edge is broad or one lucky corner,
+slicing the rule across six pre-registered families. It is deliberately **not**
+a search: no bucket is ever selected to trade, and the report refuses to name a
+best one, because the best of a dozen buckets is a selection effect. Its sign
+test runs per family, never pooled — the families overlap, so pooling counts
+every trade once per family.
+
 ## Forward evidence (`oracle/paper.py`)
 
 The mean-reversion rule passed every retrospective test available, but all of
@@ -429,11 +478,23 @@ them reuse the same ten years. The paper ledger records each qualifying setup
 **before the outcome is known** and settles it after the close, so the forward
 row is the one number that could not have been fitted. It places no orders.
 
+It records **both settlement legs** — the same-session exit as validated, and
+the same trade sold at the next open — because the T+1 question is unresolved
+and the forward record takes about four months to fill. Discovering at the end
+of that wait that only the unexecutable leg had been kept would waste the wait.
+The two already disagree: the first forward setup was a +0.0002% win at T+0 and
+a −0.3002% loss at T+1.
+
 ## Open decisions
 
-- **Timing.** The measured edge sits in the overnight gap, which entry at the
-  open forfeits. Capturing it means holding overnight through the US session
-  without knowing its outcome — a different strategy, and a decision for a human.
+- **Timing — now measured, no longer a judgement call.** The overnight gap is
+  the losing half of the day (−0.072%/session, t=−14.4), and holding the rule
+  overnight earns less with a wider spread (+0.304% at t=+2.22 vs +0.317% at
+  t=+2.44). Entering at the open is not forfeiting the edge; it is sitting out
+  the drag. See `research/exit_horizon.py`.
+- **Settlement — open, and the largest risk here.** Whether these ETFs permit
+  same-session selling decides whether the validated rule is placeable. Not
+  answerable from price data; ask a broker. Priced both ways meanwhile.
 - **Macro ingestion is file-based** (hand-maintained JSON); a live feed is a
   clean upgrade behind `load_from_file`.
 - **Analyst variants.** The adversarial debate analyst is built and off by

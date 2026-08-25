@@ -33,6 +33,13 @@ ENDPOINTS = {
     # results a reader most needs beside the headline accuracy.
     "paper": server.paper_strategy,
     "segments": server.segments,
+    # Can the one validated rule be executed, does it hold across regimes, and
+    # is its exit the right one — the three questions that decide whether the
+    # headline number means anything.
+    "execution": server.execution_realism,
+    "exit-horizon": server.exit_horizon,
+    "regimes": server.regimes,
+    "objective": server.learning_objective,
     "heatmap": server.heatmap,
     "accuracy": server.accuracy,
     "leaderboard": server.leaderboard,
