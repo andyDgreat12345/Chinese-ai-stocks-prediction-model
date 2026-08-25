@@ -4,6 +4,12 @@ data/*.jsonl
 data/*.json
 data/reflections/
 
+# Persisted state restored from the `oracle-state` branch. This is where the
+# workflow actually puts the database (ORACLE_DB=$GITHUB_WORKSPACE/_state/...),
+# and it is a ~23MB binary that lives on its own branch. Committing it would
+# put the whole history into the source tree.
+_state/
+
 # Python
 .venv/
 __pycache__/
