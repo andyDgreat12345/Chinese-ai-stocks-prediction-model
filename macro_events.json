@@ -1,0 +1,6 @@
+[
+  {"event_date": "2026-08-13", "category": "fed_policy",  "description": "FOMC rate decision",        "weight": 2.0},
+  {"event_date": "2026-08-09", "category": "macro_data",  "description": "US CPI release",             "weight": 1.5},
+  {"event_date": "2026-08-31", "category": "macro_data",  "description": "China manufacturing PMI",    "weight": 1.5},
+  {"event_date": "2026-08-15", "category": "tariffs",     "description": "US-China trade review",      "weight": 1.5, "notes": "watch chip export language"}
+]
